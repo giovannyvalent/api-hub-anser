@@ -3,8 +3,9 @@ import { logger } from '../lib/logger.js'
 
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   const message = err instanceof Error ? err.message : 'Unknown error'
-  logger.error('Unhandled error:', err)
-  res.status(500).json({ error: message })
+  const status = (err as { status?: number })?.status ?? 500
+  if (status >= 500) logger.error('Unhandled error:', err)
+  res.status(status).json({ error: message })
 }
 
 export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {

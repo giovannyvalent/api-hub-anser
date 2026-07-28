@@ -1,6 +1,7 @@
 {
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "crons": [
-    { "path": "/api/cron/sync-nibo", "schedule": "0 6 * * *" }
+    { "path": "/api/cron/sync-nibo-financial", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/sync-nibo-full", "schedule": "0 6 * * *" }
   ]
 }
