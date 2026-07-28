@@ -37,6 +37,11 @@ async function fetchJson<T>(url: string, headers: Record<string, string>): Promi
 // Pagina um endpoint OData-like ($top/$skip) até esgotar os resultados.
 // maxPages limita o custo de uma chamada só (sync incremental usa um valor
 // baixo; o full backfill usa um valor bem mais alto).
+//
+// IMPORTANTE: a API do Nibo (LINQ-to-Entities por trás) exige um $orderby
+// sempre que $skip é usado, senão retorna 500 ("the method 'Skip' is only
+// supported for sorted input... 'OrderBy' must be called before 'Skip'").
+// orderBy é obrigatório aqui de propósito, pra nunca esquecer de novo.
 async function paginate<T>(
   buildUrl: (top: number, skip: number) => string,
   headers: Record<string, string>,
@@ -86,6 +91,7 @@ export class NiboEmpresaClient {
       const url = new URL(`${EMPRESAS_BASE}/accounts/views/balance`)
       url.searchParams.set('$top', String(top))
       url.searchParams.set('$skip', String(skip))
+      url.searchParams.set('$orderby', 'accountName asc')
       return url.toString()
     }, this.headers(), 20)
   }
@@ -116,6 +122,7 @@ export class NiboEmpresaClient {
       const url = new URL(`${EMPRESAS_BASE}/${STAKEHOLDER_ENDPOINT[kind]}`)
       url.searchParams.set('$top', String(top))
       url.searchParams.set('$skip', String(skip))
+      url.searchParams.set('$orderby', 'name asc')
       return url.toString()
     }, this.headers(), 50)
   }
@@ -175,6 +182,7 @@ export class NiboAccountantClient {
       const url = new URL(`${ACCOUNTANT_BASE}/accountingfirms/${this.firmId}/customers`)
       url.searchParams.set('$top', String(top))
       url.searchParams.set('$skip', String(skip))
+      url.searchParams.set('$orderby', 'name asc')
       return url.toString()
     }, this.headers(), 20)
   }
