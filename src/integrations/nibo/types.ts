@@ -16,9 +16,21 @@ export interface NiboAccount {
   bankName?: string
   bankAgency?: string
   bankAccount?: string
+  bankAccountVerificationNumber?: number
   bankNumber?: number
+  scrapingEnabled?: boolean
+  hasPaymentOperation?: boolean
+  boletoEnabled?: boolean
   isAutomated?: boolean
+  canBeAutomated?: boolean
+  automationLastSyncDate?: string
+  hasMFA?: boolean
+  isMFARequired?: boolean
   isOpenFinance?: boolean
+  linkId?: string
+  cnabEnabled?: boolean
+  automationRequiresMigration?: boolean
+  automatedAccountOpenBalanceDate?: string
 }
 
 export interface NiboAccountBalance {
@@ -27,8 +39,10 @@ export interface NiboAccountBalance {
   balance: number
   agency?: string
   accountNumber?: string
+  accountVerificationNumber?: number
   isVirtual?: boolean
   isReconcilable?: boolean
+  isPJBankVirtualAccountWaitingApprove?: boolean
   bank?: { id: string; code: string; name: string }
   pendingReconciliationCount?: number
   totalOpenReconciliations?: number
@@ -141,6 +155,7 @@ export interface NiboSchedule {
   isPaid?: boolean
   paidValue?: number
   openValue?: number
+  costCenterValueType?: number
   stakeholder?: { id: string; name: string; isDeleted?: boolean; type?: string; cpfCnpj?: string }
   description?: string
   reference?: string
@@ -151,7 +166,17 @@ export interface NiboSchedule {
   hasInstallment?: boolean
   hasRecurrence?: boolean
   recurrence?: Record<string, unknown>
+  hasOpenEntryPromise?: boolean
+  hasEntryPromise?: boolean
+  lastEntryPromise?: Record<string, unknown>
+  autoGenerateEntryPromise?: boolean
   hasInvoice?: boolean
+  hasPendingInvoice?: boolean
+  hasScheduleInvoice?: boolean
+  customAttributes?: Record<string, unknown>
+  serviceProvisionLocationType?: number
+  autoGenerateNFSeType?: number
+  autoGenerateCollectionType?: number
   isPaymentScheduled?: boolean
 }
 
