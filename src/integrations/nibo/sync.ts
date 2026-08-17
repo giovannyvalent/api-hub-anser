@@ -539,11 +539,20 @@ async function activeNiboCredentials(): Promise<{ companyId: string; apiToken: s
     .filter((c): c is { companyId: string; apiToken: string } => Boolean(c.apiToken))
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Espaçamento entre empresas — cada empresa já é sequencial internamente
+// (não paralelo), isso só evita rajadas quando o número de empresas cresce.
+const INTER_COMPANY_DELAY_MS = 250
+
 export async function syncAllCompaniesNiboFull(): Promise<SyncReport[]> {
   const credentials = await activeNiboCredentials()
   const reports: SyncReport[] = []
   for (const { companyId, apiToken } of credentials) {
     reports.push(await syncCompanyNiboFull(companyId, apiToken))
+    await sleep(INTER_COMPANY_DELAY_MS)
   }
   return reports
 }
@@ -553,6 +562,7 @@ export async function syncAllCompaniesNiboIncremental(): Promise<SyncReport[]> {
   const reports: SyncReport[] = []
   for (const { companyId, apiToken } of credentials) {
     reports.push(await syncCompanyNiboIncremental(companyId, apiToken))
+    await sleep(INTER_COMPANY_DELAY_MS)
   }
   return reports
 }

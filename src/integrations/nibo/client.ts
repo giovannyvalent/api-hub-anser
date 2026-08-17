@@ -19,19 +19,47 @@ const ACCOUNTANT_BASE = 'https://api.nibo.com.br/accountant/api/v1'
 
 const PAGE_SIZE = 100
 
+// Retry com backoff pra absorver picos de rate limit (429) e instabilidade
+// transitória (502/503/504) do Nibo, sem esperar o próximo ciclo do cron.
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504])
+const MAX_RETRIES = 4
+const BASE_DELAY_MS = 800
+
 class NiboApiError extends Error {
   constructor(public status: number, public url: string, public body: string) {
     super(`Nibo API error ${status} on ${url}: ${body}`)
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function retryDelayMs(res: Response, attempt: number): number {
+  const retryAfter = res.headers.get('retry-after')
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (!Number.isNaN(seconds)) return seconds * 1000
+  }
+  // backoff exponencial com jitter: ~0.8s, 1.6s, 3.2s, 6.4s
+  return BASE_DELAY_MS * 2 ** attempt + Math.random() * 300
+}
+
 async function fetchJson<T>(url: string, headers: Record<string, string>): Promise<T> {
-  const res = await fetch(url, { headers: { accept: 'application/json', ...headers } })
-  if (!res.ok) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(url, { headers: { accept: 'application/json', ...headers } })
+    if (res.ok) return res.json() as Promise<T>
+
+    if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_RETRIES) {
+      await sleep(retryDelayMs(res, attempt))
+      continue
+    }
+
     const body = await res.text()
     throw new NiboApiError(res.status, url, body)
   }
-  return res.json() as Promise<T>
+  // inalcançável (o loop sempre retorna ou lança), só pra satisfazer o TS
+  throw new NiboApiError(0, url, 'retries exhausted')
 }
 
 // Pagina um endpoint OData-like ($top/$skip) até esgotar os resultados.
