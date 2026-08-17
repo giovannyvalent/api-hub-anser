@@ -126,6 +126,44 @@ superior). Duas opções se for ficar no Hobby:
    `GET https://<seu-hub>.vercel.app/api/cron/sync-nibo-financial` a cada 5
    min com o header `Authorization: Bearer <CRON_SECRET>`.
 
+### Como o hub evita bater no limite de requisições do Nibo
+
+O Nibo não documenta publicamente o limite exato de requisições, então o
+hub usa uma estratégia em camadas — pensada pra nunca sobrecarregar a API,
+mesmo quando o número de empresas cadastradas crescer:
+
+1. **Nunca paralelo** — uma empresa é sincronizada de cada vez, e dentro de
+   uma empresa os recursos (accounts, categories, schedules...) também rodam
+   em sequência, nunca em `Promise.all`.
+2. **Throttle global** — todo `fetch` ao Nibo passa por uma fila que impõe
+   um intervalo mínimo entre requisições (`NIBO_MIN_REQUEST_INTERVAL_MS`,
+   padrão 200ms ≈ 5 req/s), não importa se a chamada veio de uma empresa só,
+   do sync completo ou do cron. Isso evita rajada mesmo com concorrência.
+3. **Espaçamento entre empresas** — 250ms de pausa entre uma empresa e a
+   próxima no loop de sync-all, por cima do throttle acima.
+4. **Retry com backoff em 429/502/503/504** — se mesmo assim o Nibo
+   responder rate limit, o hub espera (respeitando `Retry-After` quando
+   presente) e tenta de novo antes de desistir, em vez de falhar e esperar
+   o próximo ciclo do cron (5 min depois).
+5. **Incremental só pede o que mudou** — filtro `updateDate ge <cursor>`
+   (ver seção "Sync — dois níveis" acima) evita re-buscar o histórico
+   inteiro a cada ciclo; isso é o que mais reduz volume no dia a dia.
+6. **Full sync é raro e isolado do incremental** — o histórico completo
+   (pesado) só roda 1x/dia (ou sob demanda), nunca junto com o financeiro
+   de alta frequência.
+
+**Importante para a migração/importação em massa** (trazer todas as
+empresas que hoje conectam direto no Nibo): não dispare `POST
+/api/sync/nibo/full` para dezenas de empresas de uma vez numa chamada só —
+além do volume de requisições, uma função serverless da Vercel tem tempo
+de execução limitado e pode estourar o timeout antes de terminar todas.
+O jeito certo é rodar um script externo (fora da Vercel, sem limite de
+tempo) que chama `POST /api/sync/nibo/<companyId>/full` **uma empresa por
+vez**, com uma pausa maior entre cada uma (ex: alguns segundos) — o
+throttle interno do hub já protege cada chamada individual, mas o
+espaçamento entre empresas nessa carga inicial pesada (24 meses de
+histórico por empresa) deve ser maior que os 250ms do dia a dia.
+
 ## Setup
 
 ### 1. Criar o Supabase dedicado

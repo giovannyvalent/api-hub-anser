@@ -45,8 +45,34 @@ function retryDelayMs(res: Response, attempt: number): number {
   return BASE_DELAY_MS * 2 ** attempt + Math.random() * 300
 }
 
+// ---------------------------------------------------------------------------
+// Throttle global: teto de requisições/segundo pra QUALQUER chamada ao Nibo,
+// não importa se veio de uma empresa só, de um sync completo ou do cron. Isso
+// evita bater no limite em vez de só reagir depois que já bateu (retry acima
+// cobre o resto — picos que passarem do teto por concorrência externa, etc).
+// A Nibo não documenta o limite exato publicamente, então usamos um valor
+// conservador; ajustável via env var se descobrirmos o limite real deles.
+// ---------------------------------------------------------------------------
+const MIN_REQUEST_INTERVAL_MS = Number(process.env.NIBO_MIN_REQUEST_INTERVAL_MS) || 200 // ~5 req/s
+let queueTail: Promise<void> = Promise.resolve()
+let lastRequestAt = 0
+
+async function throttle(): Promise<void> {
+  const myTurn = queueTail
+  let release: () => void
+  queueTail = new Promise((resolve) => { release = resolve })
+  await myTurn
+
+  const wait = Math.max(0, lastRequestAt + MIN_REQUEST_INTERVAL_MS - Date.now())
+  if (wait > 0) await sleep(wait)
+  lastRequestAt = Date.now()
+
+  release!()
+}
+
 async function fetchJson<T>(url: string, headers: Record<string, string>): Promise<T> {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await throttle()
     const res = await fetch(url, { headers: { accept: 'application/json', ...headers } })
     if (res.ok) return res.json() as Promise<T>
 
