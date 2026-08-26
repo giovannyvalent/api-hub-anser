@@ -235,7 +235,7 @@ Todas exigem `x-api-key: <HUB_API_KEY>`, exceto `/api/health` e `/api/cron/*`
 (que usam `CRON_SECRET` — ver `src/middleware/cronAuth.ts`).
 
 **Empresas**
-- `GET /api/companies`
+- `GET /api/companies` — cada empresa vem com `platforms: string[]` (ex: `["nibo"]`)
 - `POST /api/companies` `{ name, nibo_customer_id?, notes? }`
 - `PATCH /api/companies/:id`
 - `DELETE /api/companies/:id`
@@ -266,6 +266,46 @@ Todas exigem `x-api-key: <HUB_API_KEY>`, exceto `/api/health` e `/api/cron/*`
 - `GET /api/data/nibo/firm-customers`
 - `GET /api/data/nibo/firm-tasks?date=YYYY-MM-DD`
 - `GET /api/data/nibo/sync-logs?companyId=&resource=`
+
+## Conector MCP (colaboradores criando relatórios ao vivo no Claude)
+
+O hub expõe um servidor MCP somente leitura em `/api/mcp` (protocolo
+Streamable HTTP, stateless), pra ser cadastrado como **conector customizado**
+no Claude — assim qualquer colaborador com acesso ao workspace pode pedir
+pro Claude montar relatórios/artifacts a partir dos dados reais, sem nunca
+ver token de plataforma nenhum e sem poder escrever no hub (só leitura).
+
+### Como conectar
+
+No claude.ai: `Settings → Connectors → Add custom connector` (disponível em
+Pro, Max, Team e Enterprise — se a opção não aparecer pro seu plano, o
+próprio claude.ai avisa).
+
+- **URL**: `https://<seu-hub>.vercel.app/api/mcp`
+- **Autenticação**: header `Authorization: Bearer <HUB_API_KEY>`
+
+### Ferramentas disponíveis
+
+Espelham as rotas `GET /api/data/nibo/*` (mesmas funções, ver `src/data/nibo.ts`):
+
+`list_companies`, `get_nibo_accounts`, `get_nibo_account_balances`,
+`get_nibo_statement`, `get_nibo_categories`, `get_nibo_cost_centers`,
+`get_nibo_stakeholders`, `get_nibo_organization`, `get_nibo_schedules`,
+`get_nibo_firm_customers`, `get_nibo_firm_tasks`, `get_sync_logs`.
+
+Sempre comece por `list_companies` pra descobrir o `companyId` e quais
+plataformas aquela empresa tem conectadas.
+
+### ⚠️ Limite importante: só funciona dentro do Claude
+
+A conexão MCP só existe enquanto a conversa/artifact está rodando **dentro
+do Claude** (claude.ai ou app). Se um colaborador baixar um artifact/HTML
+gerado e abrir como arquivo local, ou hospedar em outro servidor, a parte
+"ao vivo" para de funcionar — não existe `window.claude` fora do
+visualizador do Claude. Pra dados que precisam sair do Claude (baixar,
+mandar pra outro sistema, hospedar em outro domínio), o caminho é a API
+REST normal (`/api/data/nibo/*`) consumida por uma aplicação de verdade
+que guarda a `HUB_API_KEY` no servidor dela — não um artifact exportado.
 
 ## Adicionar uma nova plataforma (ex: Omie)
 

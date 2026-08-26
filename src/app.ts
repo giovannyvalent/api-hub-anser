@@ -8,6 +8,8 @@ import { credentialsRouter } from './routes/credentials.js'
 import { syncRouter } from './routes/sync.js'
 import { cronRouter } from './routes/cron.js'
 import { niboDataRouter } from './routes/data/nibo.js'
+import { mcpRouter } from './routes/mcp.js'
+import { mcpAuth } from './middleware/mcpAuth.js'
 
 export const app = express()
 
@@ -27,6 +29,10 @@ app.use(healthRouter)
 
 // Cron (autenticação própria via CRON_SECRET, ver middleware/cronAuth.ts).
 app.use('/api/cron', cronAuth, cronRouter)
+
+// MCP (autenticação própria via Bearer token, ver middleware/mcpAuth.ts) —
+// somente leitura, é o que os conectores customizados no Claude usam.
+app.use('/api/mcp', mcpAuth, mcpRouter)
 
 // Demais rotas — todas exigem x-api-key.
 app.use(apiKeyAuth)

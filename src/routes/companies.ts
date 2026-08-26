@@ -1,20 +1,18 @@
 import { Router } from 'express'
 import { getSupabase } from '../lib/supabase.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
+import { listCompanies } from '../data/nibo.js'
 
 export const companiesRouter = Router()
 
 // GET /api/companies?active=true
+// Cada empresa vem com "platforms": string[] (ex: ["nibo"]) — quais sistemas
+// ela tem credencial ativa, sem nunca expor o token.
 companiesRouter.get(
   '/api/companies',
   asyncHandler(async (req, res) => {
-    const supabase = getSupabase()
-    let query = supabase.from('companies').select('*').order('name', { ascending: true })
-    if (req.query.active !== undefined) {
-      query = query.eq('active', req.query.active === 'true')
-    }
-    const { data, error } = await query
-    if (error) return res.status(500).json({ error: error.message })
+    const active = req.query.active !== undefined ? req.query.active === 'true' : undefined
+    const data = await listCompanies({ active })
     res.json({ data })
   }),
 )
