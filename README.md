@@ -115,16 +115,22 @@ popular o histórico) — depois disso o incremental mantém tudo atualizado.
 
 ### ⚠️ Cron de 5 em 5 minutos e o plano da Vercel
 
-O plano **Hobby** da Vercel só permite crons com frequência de **1x/dia**.
-Para rodar `/api/cron/sync-nibo-financial` de fato a cada 5 minutos como
-configurado em `vercel.json`, o projeto precisa estar no plano **Pro** (ou
-superior). Duas opções se for ficar no Hobby:
-1. Fazer upgrade do projeto na Vercel para Pro.
-2. Manter `vercel.json` só com o cron diário (full) e disparar o incremental
-   de fora, com um scheduler externo gratuito (ex: [cron-job.org](https://cron-job.org),
-   GitHub Actions com `schedule`, EasyCron) fazendo
-   `GET https://<seu-hub>.vercel.app/api/cron/sync-nibo-financial` a cada 5
-   min com o header `Authorization: Bearer <CRON_SECRET>`.
+O plano **Hobby** da Vercel não permite crons com frequência maior que
+**1x/dia** — e não é só uma questão de rodar mais devagar: com um cron mais
+frequente declarado em `vercel.json`, **o deploy inteiro é recusado**
+(`"Hobby accounts are limited to daily cron jobs"`). Por isso, hoje
+`vercel.json` está com os dois crons em 1x/dia (`sync-nibo-full` às 6h,
+`sync-nibo-financial` às 6h30) — funcional, mas sem a atualização de poucos
+minutos que motivou o incremental. Duas opções pra recuperar a frequência alta:
+1. Fazer upgrade do projeto na Vercel para Pro, e então mudar o schedule de
+   `sync-nibo-financial` em `vercel.json` para `*/5 * * * *` (ou `*/15`, `*/20`
+   — o que fizer sentido; ver seção anterior sobre esse trade-off).
+2. Ficar no Hobby e disparar o incremental de fora, com um scheduler externo
+   gratuito (ex: [cron-job.org](https://cron-job.org), GitHub Actions com
+   `schedule`, EasyCron) fazendo
+   `GET https://<seu-hub>.vercel.app/api/cron/sync-nibo-financial` na frequência
+   desejada, com o header `Authorization: Bearer <CRON_SECRET>` — isso não
+   conta como cron da Vercel, então não esbarra no limite do Hobby.
 
 ### Como o hub evita bater no limite de requisições do Nibo
 
