@@ -288,7 +288,18 @@ Pro, Max, Team e Enterprise — se a opção não aparecer pro seu plano, o
 próprio claude.ai avisa).
 
 - **URL**: `https://<seu-hub>.vercel.app/api/mcp`
-- **Autenticação**: header `Authorization: Bearer <HUB_API_KEY>`
+- **Configurações avançadas**: deixe em branco (client ID/secret) — o hub faz
+  descoberta automática via `/.well-known/oauth-authorization-server` e
+  registro dinâmico de cliente (`POST /register`).
+
+Ao clicar em "Vincular", o Claude abre `/authorize` no navegador — uma
+telinha simples pedindo a `HUB_API_KEY` como senha. Isso não é um header
+customizado: o conector customizado do Claude exige o protocolo **OAuth 2.0**
+completo (não aceita chave estática direto), então o hub implementa um
+authorization server mínimo só pra isso (`routes/oauth.ts`). Por trás, o
+token que o Claude passa a usar depois de autorizar **é a própria
+`HUB_API_KEY`** — as ferramentas MCP continuam validando exatamente como
+antes; o OAuth é só a camada de handshake que o protocolo exige.
 
 ### Ferramentas disponíveis
 

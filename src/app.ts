@@ -10,10 +10,12 @@ import { cronRouter } from './routes/cron.js'
 import { niboDataRouter } from './routes/data/nibo.js'
 import { mcpRouter } from './routes/mcp.js'
 import { mcpAuth } from './middleware/mcpAuth.js'
+import { oauthRouter } from './routes/oauth.js'
 
 export const app = express()
 
 app.use(express.json())
+app.use(express.urlencoded({ extended: true })) // POST /authorize e /token vêm como form (application/x-www-form-urlencoded)
 
 // CORS — libera o BI/front-end a consumir o hub.
 app.use((req, res, next) => {
@@ -26,6 +28,11 @@ app.use((req, res, next) => {
 
 // Rota pública (sem API key) — usada por health checks externos.
 app.use(healthRouter)
+
+// OAuth (authorization server) — deliberadamente pública/sem x-api-key: é o
+// próprio mecanismo de login que o conector MCP do Claude exige. Ver
+// routes/oauth.ts para o porquê disso existir.
+app.use(oauthRouter)
 
 // Cron (autenticação própria via CRON_SECRET, ver middleware/cronAuth.ts).
 app.use('/api/cron', cronAuth, cronRouter)

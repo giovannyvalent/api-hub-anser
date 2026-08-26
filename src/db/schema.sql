@@ -74,6 +74,24 @@ create table if not exists public.sync_state (
   primary key (company_id, platform, resource)
 );
 
+-- ----------------------------------------------------------------------------
+-- oauth_codes: códigos de autorização de curta duração, emitidos por
+-- GET/POST /authorize e consumidos uma única vez por POST /token — é o que
+-- permite o hub agir como authorization server OAuth pro conector MCP do
+-- Claude (que exige OAuth, não aceita header estático). O access_token
+-- emitido continua sendo a mesma HUB_API_KEY de sempre; isso só cobre o
+-- handshake exigido pelo protocolo.
+-- ----------------------------------------------------------------------------
+create table if not exists public.oauth_codes (
+  code                    text primary key,
+  redirect_uri            text not null,
+  code_challenge          text,
+  code_challenge_method   text,
+  client_id               text,
+  expires_at              timestamptz not null,
+  created_at              timestamptz not null default now()
+);
+
 -- ============================================================================
 -- Nibo — API "empresas" (por empresa-cliente, um apiToken por empresa)
 -- ============================================================================
