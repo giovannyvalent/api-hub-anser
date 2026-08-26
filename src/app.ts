@@ -42,3 +42,9 @@ app.use(syncRouter)
 app.use(niboDataRouter)
 
 app.use(errorHandler)
+
+// Export default além do nomeado: a detecção automática de framework "Express"
+// da Vercel roteia a raiz "/" direto pra este módulo e exige um default export
+// que seja a app/handler — sem isso a função crasha em runtime com
+// "Invalid export found in module... The default export must be a function or server."
+export default app
