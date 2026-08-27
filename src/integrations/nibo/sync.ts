@@ -263,13 +263,11 @@ function statementEntryKey(entryId: string | undefined, index: number): string {
 async function syncStatementForAccounts(
   companyId: string,
   client: NiboEmpresaClient,
-  accountIds: string[],
-  from: string,
-  to: string,
+  accounts: { id: string; from: string; to: string }[],
 ) {
   const supabase = getSupabase()
   let total = 0
-  for (const accountId of accountIds) {
+  for (const { id: accountId, from, to } of accounts) {
     const entries = await client.getAccountStatement(accountId, from, to)
     if (entries.length === 0) continue
     const rows = entries.map((e) => ({
@@ -414,9 +412,19 @@ export async function syncCompanyNiboFull(companyId: string, apiToken: string): 
     await runResource(companyId, 'statement', 'full', async () => {
       // Inclui contas arquivadas também — o extrato histórico delas continua
       // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
-      const accounts = await client.listAccounts()
-      const accountIds = accounts.map((a) => a.id)
-      return syncStatementForAccounts(companyId, client, accountIds, fmt(from), fmt(to))
+      // Conta arquivada não tem mais movimento novo, então em vez da janela
+      // padrão de 24 meses busca desde a data de abertura (dateOfOpenBalance),
+      // ou 10 anos atrás se não tiver essa data — senão o histórico de contas
+      // fechadas há mais tempo fica de fora da janela padrão.
+      const niboAccounts = await client.listAccounts()
+      const wideFrom = new Date(now)
+      wideFrom.setFullYear(wideFrom.getFullYear() - 10)
+      const accountRanges = niboAccounts.map((a) => ({
+        id: a.id,
+        from: a.isArchived ? (a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : fmt(wideFrom)) : fmt(from),
+        to: fmt(to),
+      }))
+      return syncStatementForAccounts(companyId, client, accountRanges)
     }),
   )
 
@@ -453,13 +461,15 @@ export async function syncCompanyNiboIncremental(companyId: string, apiToken: st
 
   results.push(
     await runResource(companyId, 'statement', 'incremental', async () => {
-      const accounts = await client.listAccounts()
-      const accountIds = accounts.map((a) => a.id)
+      // Conta arquivada não tem movimento novo — o histórico dela já foi
+      // pego inteiro no full sync, não precisa checar de novo a cada ciclo.
+      const accounts = await client.listAccounts().then((list) => list.filter((a) => !a.isArchived))
       const to = new Date()
       const from = new Date(to)
       from.setDate(from.getDate() - 3)
       const fmt = (d: Date) => d.toISOString().split('T')[0]
-      return syncStatementForAccounts(companyId, client, accountIds, fmt(from), fmt(to))
+      const accountRanges = accounts.map((a) => ({ id: a.id, from: fmt(from), to: fmt(to) }))
+      return syncStatementForAccounts(companyId, client, accountRanges)
     }),
   )
 
