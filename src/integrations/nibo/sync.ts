@@ -412,9 +412,11 @@ export async function syncCompanyNiboFull(companyId: string, apiToken: string): 
 
   results.push(
     await runResource(companyId, 'statement', 'full', async () => {
+      // Inclui contas arquivadas também — o extrato histórico delas continua
+      // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
       const accounts = await client.listAccounts()
-      const activeIds = accounts.filter((a) => !a.isArchived).map((a) => a.id)
-      return syncStatementForAccounts(companyId, client, activeIds, fmt(from), fmt(to))
+      const accountIds = accounts.map((a) => a.id)
+      return syncStatementForAccounts(companyId, client, accountIds, fmt(from), fmt(to))
     }),
   )
 
@@ -452,12 +454,12 @@ export async function syncCompanyNiboIncremental(companyId: string, apiToken: st
   results.push(
     await runResource(companyId, 'statement', 'incremental', async () => {
       const accounts = await client.listAccounts()
-      const activeIds = accounts.filter((a) => !a.isArchived).map((a) => a.id)
+      const accountIds = accounts.map((a) => a.id)
       const to = new Date()
       const from = new Date(to)
       from.setDate(from.getDate() - 3)
       const fmt = (d: Date) => d.toISOString().split('T')[0]
-      return syncStatementForAccounts(companyId, client, activeIds, fmt(from), fmt(to))
+      return syncStatementForAccounts(companyId, client, accountIds, fmt(from), fmt(to))
     }),
   )
 
