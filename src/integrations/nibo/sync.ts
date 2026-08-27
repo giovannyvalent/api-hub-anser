@@ -412,18 +412,23 @@ export async function syncCompanyNiboFull(companyId: string, apiToken: string): 
     await runResource(companyId, 'statement', 'full', async () => {
       // Inclui contas arquivadas também — o extrato histórico delas continua
       // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
-      // Conta arquivada não tem mais movimento novo, então em vez da janela
-      // padrão de 24 meses busca desde a data de abertura (dateOfOpenBalance),
-      // ou 10 anos atrás se não tiver essa data — senão o histórico de contas
-      // fechadas há mais tempo fica de fora da janela padrão.
+      // Qualquer conta (ativa ou arquivada) cuja data de abertura real
+      // (dateOfOpenBalance) seja mais antiga que a janela padrão de 24 meses
+      // usa a data de abertura como "from" — senão o começo do histórico
+      // dela fica de fora. Ex: "04 - Cartão de Crédito" abriu em 2024-02-28,
+      // ~6 meses antes da janela padrão, e ficava sem esses 6 meses iniciais.
+      // Arquivada sem dateOfOpenBalance cai num fallback bem largo (10 anos).
       const niboAccounts = await client.listAccounts()
       const wideFrom = new Date(now)
       wideFrom.setFullYear(wideFrom.getFullYear() - 10)
-      const accountRanges = niboAccounts.map((a) => ({
-        id: a.id,
-        from: a.isArchived ? (a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : fmt(wideFrom)) : fmt(from),
-        to: fmt(to),
-      }))
+      const standardFrom = fmt(from)
+      const accountRanges = niboAccounts.map((a) => {
+        const openDate = a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : null
+        let effectiveFrom = standardFrom
+        if (openDate && openDate < standardFrom) effectiveFrom = openDate
+        else if (a.isArchived && !openDate) effectiveFrom = fmt(wideFrom)
+        return { id: a.id, from: effectiveFrom, to: fmt(to) }
+      })
       return syncStatementForAccounts(companyId, client, accountRanges)
     }),
   )
