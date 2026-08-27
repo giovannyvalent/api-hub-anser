@@ -151,12 +151,42 @@ export class NiboEmpresaClient {
   }
 
   // Extrato real da conta (ledger) — diferente de schedules (agendado/competência).
+  // Esse endpoint NÃO suporta $top/$skip (a Nibo retorna 500 mesmo se
+  // pedirmos, e trava com erro se tentarmos paginar via OData) — ele apenas
+  // corta silenciosamente em 500 itens por chamada, do mais antigo pro mais
+  // recente dentro do período. Detectado numa auditoria: contas com muito
+  // volume (ex: 1.588 lançamentos em 1 conta) ficavam com o extrato cortado
+  // numa data no meio do período, sem erro nenhum. Corrigido paginando por
+  // data: quando bate o teto de 500, refaz a chamada a partir do último dia
+  // retornado, até esgotar o período ou um lote vir com menos de 500.
   async getAccountStatement(accountId: string, startDate: string, endDate: string): Promise<NiboStatementEntry[]> {
-    const url = new URL(`${EMPRESAS_BASE}/accounts/${accountId}/views/statement`)
-    url.searchParams.set('startDate', startDate)
-    url.searchParams.set('endDate', endDate)
-    const data = await fetchJson<NiboListResponse<NiboStatementEntry>>(url.toString(), this.headers())
-    return data.items ?? []
+    const PAGE_LIMIT = 500
+    const MAX_ITERATIONS = 100
+    const all: NiboStatementEntry[] = []
+    let currentStart = startDate
+
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      const url = new URL(`${EMPRESAS_BASE}/accounts/${accountId}/views/statement`)
+      url.searchParams.set('startDate', currentStart)
+      url.searchParams.set('endDate', endDate)
+      const data = await fetchJson<NiboListResponse<NiboStatementEntry>>(url.toString(), this.headers())
+      const items = data.items ?? []
+      if (items.length === 0) break
+
+      // "StartAccountBalance" é um pseudo-lançamento (saldo de abertura no
+      // startDate daquela chamada específica) — só faz sentido na 1a página;
+      // nas páginas seguintes ele representaria outro saldo/data e colidiria
+      // na chave de upsert (entry_key = "start-<index>").
+      all.push(...(i === 0 ? items : items.filter((it) => it.type !== 'StartAccountBalance')))
+
+      if (items.length < PAGE_LIMIT) break
+
+      const maxDate = items.reduce((max, it) => (it.date > max ? it.date : max), items[0].date).split('T')[0]
+      if (maxDate === currentStart) break // não avançou — evita loop infinito
+      currentStart = maxDate
+    }
+
+    return all
   }
 
   async listCategories(): Promise<NiboCategory[]> {
