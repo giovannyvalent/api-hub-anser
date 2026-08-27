@@ -186,7 +186,17 @@ export class NiboEmpresaClient {
       currentStart = maxDate
     }
 
-    return all
+    // A borda entre páginas é inclusiva de propósito (currentStart = último
+    // dia da página anterior), então o mesmo lançamento pode vir duas vezes.
+    // Precisa deduplicar aqui — um upsert em lote com a mesma chave repetida
+    // dentro do mesmo INSERT quebra no Postgres ("cannot affect row a second time").
+    const seen = new Set<string>()
+    return all.filter((it) => {
+      const key = it.entryId || `start-${it.index}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   }
 
   async listCategories(): Promise<NiboCategory[]> {
