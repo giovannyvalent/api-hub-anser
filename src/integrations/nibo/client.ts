@@ -35,6 +35,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function midDate(start: string, end: string): string {
+  const s = new Date(`${start}T00:00:00Z`).getTime()
+  const e = new Date(`${end}T00:00:00Z`).getTime()
+  return new Date(s + Math.floor((e - s) / 2)).toISOString().split('T')[0]
+}
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(`${dateStr}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().split('T')[0]
+}
+
 function retryDelayMs(res: Response, attempt: number): number {
   const retryAfter = res.headers.get('retry-after')
   if (retryAfter) {
@@ -151,52 +163,67 @@ export class NiboEmpresaClient {
   }
 
   // Extrato real da conta (ledger) — diferente de schedules (agendado/competência).
-  // Esse endpoint NÃO suporta $top/$skip (a Nibo retorna 500 mesmo se
-  // pedirmos, e trava com erro se tentarmos paginar via OData) — ele apenas
-  // corta silenciosamente em 500 itens por chamada, do mais antigo pro mais
-  // recente dentro do período. Detectado numa auditoria: contas com muito
-  // volume (ex: 1.588 lançamentos em 1 conta) ficavam com o extrato cortado
-  // numa data no meio do período, sem erro nenhum. Corrigido paginando por
-  // data: quando bate o teto de 500, refaz a chamada a partir do último dia
-  // retornado, até esgotar o período ou um lote vir com menos de 500.
+  // Esse endpoint NÃO suporta $top/$skip (trava com erro se tentar paginar
+  // via OData) e corta silenciosamente em 500 itens por chamada quando o
+  // período pedido tem mais que isso. IMPORTANTE (achado numa auditoria):
+  // o corte NÃO é um recorte cronológico limpo — pedir um período largo com
+  // >500 lançamentos reais pode descartar registros espalhados no MEIO do
+  // período, não só depois da última data retornada. Ou seja, "avançar a
+  // partir da última data da página anterior" não garante nada.
+  //
+  // A única estratégia confiável é bisseção: se uma chamada devolve 500
+  // (= pode ter sido truncada), divide o período em dois e repete cada
+  // metade recursivamente, até cada pedaço vir com menos de 500 — aí, e só
+  // aí, dá pra confiar que aquele pedaço veio completo.
   async getAccountStatement(accountId: string, startDate: string, endDate: string): Promise<NiboStatementEntry[]> {
-    const PAGE_LIMIT = 500
-    const MAX_ITERATIONS = 100
-    const all: NiboStatementEntry[] = []
-    let currentStart = startDate
+    const raw = await this.fetchStatementRange(accountId, startDate, endDate, startDate, 0)
 
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
-      const url = new URL(`${EMPRESAS_BASE}/accounts/${accountId}/views/statement`)
-      url.searchParams.set('startDate', currentStart)
-      url.searchParams.set('endDate', endDate)
-      const data = await fetchJson<NiboListResponse<NiboStatementEntry>>(url.toString(), this.headers())
-      const items = data.items ?? []
-      if (items.length === 0) break
-
-      // "StartAccountBalance" é um pseudo-lançamento (saldo de abertura no
-      // startDate daquela chamada específica) — só faz sentido na 1a página;
-      // nas páginas seguintes ele representaria outro saldo/data e colidiria
-      // na chave de upsert (entry_key = "start-<index>").
-      all.push(...(i === 0 ? items : items.filter((it) => it.type !== 'StartAccountBalance')))
-
-      if (items.length < PAGE_LIMIT) break
-
-      const maxDate = items.reduce((max, it) => (it.date > max ? it.date : max), items[0].date).split('T')[0]
-      if (maxDate === currentStart) break // não avançou — evita loop infinito
-      currentStart = maxDate
-    }
-
-    // A borda entre páginas é inclusiva de propósito (currentStart = último
-    // dia da página anterior), então o mesmo lançamento pode vir duas vezes.
-    // Precisa deduplicar aqui — um upsert em lote com a mesma chave repetida
-    // dentro do mesmo INSERT quebra no Postgres ("cannot affect row a second time").
+    // Dedup defensivo por entryId — não deveria haver sobreposição real com
+    // bisseção (os intervalos não se tocam), mas serve de rede de segurança.
     const seen = new Set<string>()
-    return all.filter((it) => {
-      const key = it.entryId || `start-${it.index}`
+    return raw.filter((it) => {
+      const key = it.entryId || `${it.type}-${it.date}-${it.index}`
       if (seen.has(key)) return false
       seen.add(key)
       return true
     })
+  }
+
+  private async fetchStatementRange(
+    accountId: string,
+    start: string,
+    end: string,
+    originalStart: string,
+    depth: number,
+  ): Promise<NiboStatementEntry[]> {
+    const PAGE_LIMIT = 500
+    const MAX_DEPTH = 14 // 2^14 subdivisões — jamais deveria chegar perto disso na prática
+
+    const url = new URL(`${EMPRESAS_BASE}/accounts/${accountId}/views/statement`)
+    url.searchParams.set('startDate', start)
+    url.searchParams.set('endDate', end)
+    const data = await fetchJson<NiboListResponse<NiboStatementEntry>>(url.toString(), this.headers())
+    const items = data.items ?? []
+
+    // "StartAccountBalance" é um pseudo-lançamento (saldo de abertura no
+    // início do período PEDIDO NESSA CHAMADA) — só é um dado real quando
+    // "start" é o início do período que o chamador pediu de fato; em
+    // qualquer subdivisão interna da bisseção ele é um artefato do corte.
+    const clean = items.filter((it) => it.type !== 'StartAccountBalance' || start === originalStart)
+
+    if (items.length < PAGE_LIMIT || start === end || depth >= MAX_DEPTH) {
+      return clean
+    }
+
+    const mid = midDate(start, end)
+    const nextStart = addDays(mid, 1)
+    if (nextStart > end) return clean // não dá mais pra subdividir
+
+    const [left, right] = await Promise.all([
+      this.fetchStatementRange(accountId, start, mid, originalStart, depth + 1),
+      this.fetchStatementRange(accountId, nextStart, end, originalStart, depth + 1),
+    ])
+    return [...left, ...right]
   }
 
   async listCategories(): Promise<NiboCategory[]> {
