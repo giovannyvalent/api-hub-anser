@@ -200,11 +200,18 @@ export class NiboEmpresaClient {
     const PAGE_LIMIT = 500
     const MAX_DEPTH = 14 // 2^14 subdivisões — jamais deveria chegar perto disso na prática
 
+    // BUG do Nibo: startDate === endDate (janela de 1 dia só) devolve vazio
+    // mesmo havendo dado real naquele dia — confirmado numa auditoria (um
+    // pagamento de sócia sumiu justo num dia que a bisseção isolou sozinho).
+    // Contorno: pede um dia a mais e filtra só o dia pedido de verdade.
+    const isSingleDay = start === end
+    const queryEnd = isSingleDay ? addDays(end, 1) : end
+
     const url = new URL(`${EMPRESAS_BASE}/accounts/${accountId}/views/statement`)
     url.searchParams.set('startDate', start)
-    url.searchParams.set('endDate', end)
+    url.searchParams.set('endDate', queryEnd)
     const data = await fetchJson<NiboListResponse<NiboStatementEntry>>(url.toString(), this.headers())
-    const items = data.items ?? []
+    const items = isSingleDay ? (data.items ?? []).filter((it) => it.date.startsWith(start)) : data.items ?? []
 
     // "StartAccountBalance" é um pseudo-lançamento (saldo de abertura no
     // início do período PEDIDO NESSA CHAMADA) — só é um dado real quando
