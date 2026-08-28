@@ -195,6 +195,23 @@ export interface NiboOrganization {
   users?: { userId: string; email: string; name: string; isOwner: boolean }[]
 }
 
+// GET /empresas/v1/users — usuários com acesso à empresa no Nibo (distinto de
+// "employees", que é cadastro de funcionário pra folha/financeiro).
+export interface NiboUser {
+  id: string
+  email: string
+  firstName?: string
+  lastName?: string
+  phone?: string
+  areaCode?: string
+  createDate?: string
+  isOrganizationOwner?: boolean
+  isOrganizationUser?: boolean
+  isAccountantUser?: boolean
+  acceptDate?: string
+  rolesText?: string
+}
+
 export interface NiboFirmCustomer {
   id: string
   name: string

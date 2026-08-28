@@ -111,6 +111,16 @@ export function buildMcpServer(): McpServer {
   )
 
   server.registerTool(
+    'get_nibo_users',
+    {
+      title: 'Usuários com acesso à empresa (Nibo)',
+      description: 'Usuários com acesso ao Nibo da empresa (ativos e inativos) — distinto de funcionários (RH/folha).',
+      inputSchema: { companyId: companyIdField },
+    },
+    async ({ companyId }) => safe(() => niboData.getUsers(companyId)),
+  )
+
+  server.registerTool(
     'get_nibo_stakeholders',
     {
       title: 'Clientes/fornecedores/sócios/funcionários (Nibo)',

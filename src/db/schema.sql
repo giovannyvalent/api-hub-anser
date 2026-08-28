@@ -254,6 +254,29 @@ create table if not exists public.nibo_stakeholders (
 create index if not exists nibo_stakeholders_company_kind_idx
   on public.nibo_stakeholders (company_id, kind);
 
+-- Usuários com acesso à empresa no Nibo (GET /users) — distinto de
+-- nibo_stakeholders (kind='employee'), que é cadastro de RH/folha.
+-- Inclui ativos e inativos, tudo que a API retornar.
+create table if not exists public.nibo_users (
+  id                    uuid primary key default gen_random_uuid(),
+  company_id            uuid not null references public.companies(id) on delete cascade,
+  nibo_id               text not null,
+  email                 text not null default '',
+  first_name            text default '',
+  last_name             text default '',
+  phone                 text default '',
+  area_code             text default '',
+  is_organization_owner boolean not null default false,
+  is_organization_user  boolean not null default false,
+  is_accountant_user    boolean not null default false,
+  create_date           timestamptz,
+  accept_date           timestamptz,
+  roles_text            text default '',
+  raw                   jsonb not null default '{}'::jsonb,
+  synced_at             timestamptz not null default now(),
+  unique (company_id, nibo_id)
+);
+
 -- Contas a pagar (type='Debit', endpoint /schedules/debit) e a receber
 -- (type='Credit', endpoint /schedules/credit). categories_split/cost_centers_split
 -- guardam o rateio (quando o lançamento é dividido entre múltiplas categorias/CCs).

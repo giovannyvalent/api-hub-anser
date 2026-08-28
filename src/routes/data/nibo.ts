@@ -52,6 +52,17 @@ niboDataRouter.get(
   }),
 )
 
+// GET /api/data/nibo/users?companyId= — usuários com acesso à empresa (ativos e inativos)
+niboDataRouter.get(
+  '/api/data/nibo/users',
+  asyncHandler(async (req, res) => {
+    const companyId = requireCompanyId(req, res)
+    if (!companyId) return
+    const data = await niboData.getUsers(companyId)
+    res.json({ data })
+  }),
+)
+
 // GET /api/data/nibo/schedules?companyId=&from=&to=&isPaid=&type=Debit|Credit&categoryType=in|out&limit=&offset=
 // type=Debit -> contas a pagar; type=Credit -> contas a receber (campo nativo do Nibo, mais confiável que category_type/isEntry).
 niboDataRouter.get(

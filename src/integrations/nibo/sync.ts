@@ -274,6 +274,34 @@ async function syncOrganization(companyId: string, client: NiboEmpresaClient) {
   return 1
 }
 
+async function syncUsers(companyId: string, client: NiboEmpresaClient) {
+  const supabase = getSupabase()
+  const users = await client.listUsers()
+  const rows = users.map((u) => ({
+    company_id: companyId,
+    nibo_id: u.id,
+    email: u.email,
+    first_name: u.firstName ?? '',
+    last_name: u.lastName ?? '',
+    phone: u.phone ?? '',
+    area_code: u.areaCode ?? '',
+    is_organization_owner: u.isOrganizationOwner ?? false,
+    is_organization_user: u.isOrganizationUser ?? false,
+    is_accountant_user: u.isAccountantUser ?? false,
+    create_date: u.createDate ?? null,
+    accept_date: u.acceptDate ?? null,
+    roles_text: u.rolesText ?? '',
+    raw: u,
+    synced_at: new Date().toISOString(),
+  }))
+  if (rows.length > 0) {
+    const { error } = await supabase.from('nibo_users').upsert(rows, { onConflict: 'company_id,nibo_id' })
+    if (error) throw new Error(error.message)
+  }
+  await reconcileDeletes({ table: 'nibo_users', match: { company_id: companyId }, currentNiboIds: users.map((u) => u.id) })
+  return rows.length
+}
+
 // ============================================================================
 // Recursos de alto churn — financeiro. Sincronizados no full E no incremental.
 // ============================================================================
@@ -440,6 +468,7 @@ export async function syncCompanyNiboFull(companyId: string, apiToken: string): 
   results.push(await runResource(companyId, 'categories', 'full', () => syncCategories(companyId, client)))
   results.push(await runResource(companyId, 'cost_centers', 'full', () => syncCostCenters(companyId, client)))
   results.push(await runResource(companyId, 'organization', 'full', () => syncOrganization(companyId, client)))
+  results.push(await runResource(companyId, 'users', 'full', () => syncUsers(companyId, client)))
 
   for (const kind of STAKEHOLDER_KINDS) {
     results.push(

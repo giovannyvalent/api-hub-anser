@@ -12,6 +12,7 @@ import type {
   NiboStakeholder,
   NiboStakeholderKind,
   NiboStatementEntry,
+  NiboUser,
 } from './types.js'
 
 const EMPRESAS_BASE = 'https://api.nibo.com.br/empresas/v1'
@@ -246,6 +247,19 @@ export class NiboEmpresaClient {
       url.searchParams.set('$orderby', 'name asc')
       return url.toString()
     }, this.headers(), 50)
+  }
+
+  // Usuários com acesso à empresa no Nibo — distinto de "employees"
+  // (cadastro de RH/folha). Inclui ativos e inativos: a API não expõe um
+  // filtro de status aqui, então tudo que ela retorna é sincronizado.
+  async listUsers(): Promise<NiboUser[]> {
+    return paginate<NiboUser>((top, skip) => {
+      const url = new URL(`${EMPRESAS_BASE}/users`)
+      url.searchParams.set('$top', String(top))
+      url.searchParams.set('$skip', String(skip))
+      url.searchParams.set('$orderby', 'email asc')
+      return url.toString()
+    }, this.headers(), 20)
   }
 
   async getOrganization(): Promise<NiboOrganization | null> {

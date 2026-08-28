@@ -121,6 +121,14 @@ export async function getCostCenters(companyId: string) {
   return data ?? []
 }
 
+// Usuários com acesso à empresa no Nibo (distinto de stakeholders kind=employee).
+export async function getUsers(companyId: string) {
+  const supabase = getSupabase()
+  const { data, error } = await supabase.from('nibo_users').select('*').eq('company_id', companyId).order('email')
+  if (error) throw new Error(error.message)
+  return data ?? []
+}
+
 export async function getStakeholders(companyId: string, opts: { kind?: string } = {}) {
   const supabase = getSupabase()
   let query = supabase
