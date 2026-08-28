@@ -6,6 +6,48 @@ import type { NiboStakeholderKind } from './types.js'
 
 type SyncMode = 'full' | 'incremental'
 
+// ============================================================================
+// Reconciliação de exclusões — o upsert nunca some com nada; se um registro
+// foi deletado no Nibo, ele só some da resposta da API, sem aviso. Isso
+// compara o que a Nibo retornou AGORA com o que já está no nosso banco (no
+// mesmo escopo: mesma empresa, mesmo recurso, e — quando aplicável — mesma
+// janela de data que foi realmente buscada) e apaga o que sobrou.
+// Só faz sentido no full sync: o incremental busca uma fatia ("o que mudou
+// desde X"), nunca a lista completa, então não tem como detectar exclusão.
+// ============================================================================
+async function reconcileDeletes(params: {
+  table: string
+  match: Record<string, string | boolean>
+  currentNiboIds: string[]
+  niboIdColumn?: string
+  dateRange?: { column: string; gte: string; lte: string }
+}): Promise<number> {
+  const supabase = getSupabase()
+  const col = params.niboIdColumn ?? 'nibo_id'
+
+  let query = supabase.from(params.table).select(col)
+  for (const [k, v] of Object.entries(params.match)) query = query.eq(k, v)
+  if (params.dateRange) {
+    query = query.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+  }
+
+  const { data, error } = await query
+  if (error) throw new Error(error.message)
+
+  const currentSet = new Set(params.currentNiboIds)
+  const toDelete = (data ?? []).map((r: any) => r[col]).filter((id: string) => !currentSet.has(id))
+  if (toDelete.length === 0) return 0
+
+  let delQuery = supabase.from(params.table).delete().in(col, toDelete)
+  for (const [k, v] of Object.entries(params.match)) delQuery = delQuery.eq(k, v)
+  if (params.dateRange) {
+    delQuery = delQuery.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+  }
+  const { error: delError } = await delQuery
+  if (delError) throw new Error(delError.message)
+  return toDelete.length
+}
+
 async function logSync(params: {
   companyId: string | null
   resource: string
@@ -79,7 +121,6 @@ const STAKEHOLDER_KINDS: NiboStakeholderKind[] = ['customer', 'supplier', 'partn
 async function syncAccounts(companyId: string, client: NiboEmpresaClient) {
   const supabase = getSupabase()
   const accounts = await client.listAccounts()
-  if (accounts.length === 0) return 0
   const rows = accounts.map((a) => ({
     company_id: companyId,
     nibo_id: a.id,
@@ -113,15 +154,17 @@ async function syncAccounts(companyId: string, client: NiboEmpresaClient) {
     raw: a,
     synced_at: new Date().toISOString(),
   }))
-  const { error } = await supabase.from('nibo_accounts').upsert(rows, { onConflict: 'company_id,nibo_id' })
-  if (error) throw new Error(error.message)
+  if (rows.length > 0) {
+    const { error } = await supabase.from('nibo_accounts').upsert(rows, { onConflict: 'company_id,nibo_id' })
+    if (error) throw new Error(error.message)
+  }
+  await reconcileDeletes({ table: 'nibo_accounts', match: { company_id: companyId }, currentNiboIds: accounts.map((a) => a.id) })
   return rows.length
 }
 
 async function syncCategories(companyId: string, client: NiboEmpresaClient) {
   const supabase = getSupabase()
   const categories = await client.listCategories()
-  if (categories.length === 0) return 0
   const rows = categories.map((c) => ({
     company_id: companyId,
     nibo_id: c.id,
@@ -138,15 +181,17 @@ async function syncCategories(companyId: string, client: NiboEmpresaClient) {
     raw: c,
     synced_at: new Date().toISOString(),
   }))
-  const { error } = await supabase.from('nibo_categories').upsert(rows, { onConflict: 'company_id,nibo_id' })
-  if (error) throw new Error(error.message)
+  if (rows.length > 0) {
+    const { error } = await supabase.from('nibo_categories').upsert(rows, { onConflict: 'company_id,nibo_id' })
+    if (error) throw new Error(error.message)
+  }
+  await reconcileDeletes({ table: 'nibo_categories', match: { company_id: companyId }, currentNiboIds: categories.map((c) => c.id) })
   return rows.length
 }
 
 async function syncCostCenters(companyId: string, client: NiboEmpresaClient) {
   const supabase = getSupabase()
   const costCenters = await client.listCostCenters()
-  if (costCenters.length === 0) return 0
   const rows = costCenters.map((c) => ({
     company_id: companyId,
     nibo_id: c.costCenterId,
@@ -157,15 +202,17 @@ async function syncCostCenters(companyId: string, client: NiboEmpresaClient) {
     raw: c,
     synced_at: new Date().toISOString(),
   }))
-  const { error } = await supabase.from('nibo_cost_centers').upsert(rows, { onConflict: 'company_id,nibo_id' })
-  if (error) throw new Error(error.message)
+  if (rows.length > 0) {
+    const { error } = await supabase.from('nibo_cost_centers').upsert(rows, { onConflict: 'company_id,nibo_id' })
+    if (error) throw new Error(error.message)
+  }
+  await reconcileDeletes({ table: 'nibo_cost_centers', match: { company_id: companyId }, currentNiboIds: costCenters.map((c) => c.costCenterId) })
   return rows.length
 }
 
 async function syncStakeholders(companyId: string, client: NiboEmpresaClient, kind: NiboStakeholderKind) {
   const supabase = getSupabase()
   const items = await client.listStakeholders(kind)
-  if (items.length === 0) return 0
   const rows = items.map((s) => ({
     company_id: companyId,
     kind,
@@ -187,8 +234,15 @@ async function syncStakeholders(companyId: string, client: NiboEmpresaClient, ki
     raw: s,
     synced_at: new Date().toISOString(),
   }))
-  const { error } = await supabase.from('nibo_stakeholders').upsert(rows, { onConflict: 'company_id,kind,nibo_id' })
-  if (error) throw new Error(error.message)
+  if (rows.length > 0) {
+    const { error } = await supabase.from('nibo_stakeholders').upsert(rows, { onConflict: 'company_id,kind,nibo_id' })
+    if (error) throw new Error(error.message)
+  }
+  await reconcileDeletes({
+    table: 'nibo_stakeholders',
+    match: { company_id: companyId, kind },
+    currentNiboIds: items.map((s) => s.id),
+  })
   return rows.length
 }
 
@@ -269,7 +323,6 @@ async function syncStatementForAccounts(
   let total = 0
   for (const { id: accountId, from, to } of accounts) {
     const entries = await client.getAccountStatement(accountId, from, to)
-    if (entries.length === 0) continue
     const rows = entries.map((e) => ({
       company_id: companyId,
       account_nibo_id: accountId,
@@ -292,10 +345,19 @@ async function syncStatementForAccounts(
       raw: e,
       synced_at: new Date().toISOString(),
     }))
-    const { error } = await supabase
-      .from('nibo_statement')
-      .upsert(rows, { onConflict: 'company_id,account_nibo_id,entry_key' })
-    if (error) throw new Error(error.message)
+    if (rows.length > 0) {
+      const { error } = await supabase
+        .from('nibo_statement')
+        .upsert(rows, { onConflict: 'company_id,account_nibo_id,entry_key' })
+      if (error) throw new Error(error.message)
+    }
+    await reconcileDeletes({
+      table: 'nibo_statement',
+      match: { company_id: companyId, account_nibo_id: accountId },
+      currentNiboIds: entries.map((e) => statementEntryKey(e.entryId, e.index)),
+      niboIdColumn: 'entry_key',
+      dateRange: { column: 'entry_date', gte: from, lte: to },
+    })
     total += rows.length
   }
   return total
@@ -402,6 +464,12 @@ export async function syncCompanyNiboFull(companyId: string, apiToken: string): 
       await runResource(companyId, `schedules_${kind}`, 'full', async () => {
         const schedules = await client.listSchedules(kind, { from: fmt(from), to: fmt(to) }, 300)
         const count = await upsertSchedules(scheduleRows(companyId, schedules))
+        await reconcileDeletes({
+          table: 'nibo_schedules',
+          match: { company_id: companyId, type: kind === 'debit' ? 'Debit' : 'Credit' },
+          currentNiboIds: schedules.map((s) => s.scheduleId),
+          dateRange: { column: 'due_date', gte: fmt(from), lte: fmt(to) },
+        })
         await setCursor(companyId, `schedules_${kind}`, cursorTimestamp)
         return count
       }),
@@ -495,7 +563,6 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
   results.push(
     await runResource(null, 'firm_customers', 'full', async () => {
       const customers = await client.listCustomers()
-      if (customers.length === 0) return 0
       const rows = customers.map((c) => ({
         nibo_id: c.id,
         name: c.name,
@@ -504,8 +571,11 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
         raw: c,
         synced_at: new Date().toISOString(),
       }))
-      const { error } = await supabase.from('nibo_firm_customers').upsert(rows, { onConflict: 'nibo_id' })
-      if (error) throw new Error(error.message)
+      if (rows.length > 0) {
+        const { error } = await supabase.from('nibo_firm_customers').upsert(rows, { onConflict: 'nibo_id' })
+        if (error) throw new Error(error.message)
+      }
+      await reconcileDeletes({ table: 'nibo_firm_customers', match: {}, currentNiboIds: customers.map((c) => c.id) })
       return rows.length
     }),
   )
@@ -514,7 +584,6 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
     await runResource(null, 'firm_tasks', 'full', async () => {
       const deadLine = referenceDate.toISOString().split('T')[0]
       const tasks = await client.listTasksByDate(deadLine)
-      if (tasks.length === 0) return 0
       const rows = tasks.map((t) => ({
         nibo_id: t.id,
         name: t.name,
@@ -529,8 +598,15 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
         raw: t,
         synced_at: new Date().toISOString(),
       }))
-      const { error } = await supabase.from('nibo_firm_tasks').upsert(rows, { onConflict: 'nibo_id' })
-      if (error) throw new Error(error.message)
+      if (rows.length > 0) {
+        const { error } = await supabase.from('nibo_firm_tasks').upsert(rows, { onConflict: 'nibo_id' })
+        if (error) throw new Error(error.message)
+      }
+      await reconcileDeletes({
+        table: 'nibo_firm_tasks',
+        match: { dead_line: deadLine },
+        currentNiboIds: tasks.map((t) => t.id),
+      })
       return rows.length
     }),
   )
