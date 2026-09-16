@@ -1,0 +1,119 @@
+========================================================================
+ANSER DATA HUB - REFERENCIA DE ENDPOINTS DA API
+========================================================================
+
+AUTENTICACAO
+------------------------------------------------------------------------
+Header obrigatorio em todas as chamadas:
+  x-api-key: 2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d
+
+URL base:
+  https://anser-data-hub.vercel.app
+
+
+IDS DAS EMPRESAS ATUAIS
+------------------------------------------------------------------------
+(confirme sempre com GET /api/companies antes de usar - podem mudar)
+
+  DACL     -> 6c6e0b59-e7cf-4a87-b7f7-080ca60981fd
+  Grow     -> e19d8502-d0da-4dbd-9c53-1a91e7f3a175
+  HUMANA   -> 657cc464-100c-4b90-88c9-f21c76662e79
+
+
+EMPRESAS
+------------------------------------------------------------------------
+GET /api/companies?active=true
+  Lista todas as empresas cadastradas, cada uma com "platforms": string[]
+  (ex: ["nibo"]) indicando quais sistemas ela tem conectados.
+
+
+ENDPOINTS DE DADOS
+========================================================================
+
+GET /api/data/nibo/accounts
+------------------------------------------------------------------------
+  companyId          (obrigatorio) uuid
+  includeArchived    (opcional) true/false - padrao false, esconde
+                      contas arquivadas
+
+GET /api/data/nibo/account-balances
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+  accountId    (opcional) filtra uma conta especifica
+  latest       (opcional) true (padrao, so o snapshot mais recente de
+                cada conta) ou false (historico completo)
+
+GET /api/data/nibo/statement   [extrato real / ledger]
+------------------------------------------------------------------------
+  companyId       (obrigatorio)
+  accountId       (opcional)
+  from / to       (opcional) formato YYYY-MM-DD, filtra entry_date
+  limit / offset  (opcional) paginacao, padrao 200, maximo 1000
+
+GET /api/data/nibo/categories
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+  type         (opcional) "in" (receita) ou "out" (despesa)
+
+GET /api/data/nibo/cost-centers
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+
+GET /api/data/nibo/stakeholders   [clientes/fornecedores/socios/funcionarios]
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+  kind         (opcional) customer | supplier | partner | employee
+
+GET /api/data/nibo/users   [usuarios com acesso ao Nibo, ativos e inativos]
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+
+GET /api/data/nibo/organization   [perfil cadastral da empresa]
+------------------------------------------------------------------------
+  companyId    (obrigatorio)
+
+GET /api/data/nibo/schedules   [contas a pagar e a receber]
+------------------------------------------------------------------------
+  companyId       (obrigatorio)
+  type            (opcional) "Debit" (a pagar) ou "Credit" (a receber)
+  from / to       (opcional) formato YYYY-MM-DD, filtra due_date
+  isPaid          (opcional) true/false
+  categoryType    (opcional) "in"/"out"
+  limit / offset  (opcional)
+
+GET /api/data/nibo/firm-customers
+------------------------------------------------------------------------
+  sem parametros - empresas cadastradas no Nibo Contador (nivel escritorio)
+
+GET /api/data/nibo/firm-tasks
+------------------------------------------------------------------------
+  date    (opcional) YYYY-MM-DD
+
+GET /api/data/nibo/sync-logs
+------------------------------------------------------------------------
+  companyId    (opcional)
+  resource     (opcional)
+
+
+EXEMPLO COMPLETO (curl)
+========================================================================
+curl "https://anser-data-hub.vercel.app/api/data/nibo/schedules?companyId=e19d8502-d0da-4dbd-9c53-1a91e7f3a175&type=Debit&isPaid=false&from=2026-01-01&to=2026-12-31" \
+  -H "x-api-key: 2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d"
+
+
+IMPORTANTE PARA USO NO CLAUDE.AI (CHAT)
+========================================================================
+Esses mesmos parametros (companyId, from, to, type, isPaid, kind) sao os
+ARGUMENTOS das ferramentas MCP do conector "Anser Data Hub"
+(get_nibo_schedules, get_nibo_statement, get_nibo_accounts, etc).
+
+- Dentro de uma conversa no claude.ai: a chamada de rede acontece via MCP,
+  nao via curl/REST direto - o Claude nao tem uma ferramenta generica de
+  "chamar qualquer URL".
+- Fora do claude.ai (scripts, Claude Code, Postman, aplicacoes proprias):
+  os endpoints REST acima funcionam normalmente com a x-api-key.
+
+Fluxo recomendado ao pedir pro Claude no chat:
+  1. Peca pra ele chamar list_companies primeiro, pra confirmar o
+     companyId certo da empresa que voce quer.
+  2. So depois peca a ferramenta de dado especifica, com esse companyId.

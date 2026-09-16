@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recebimentos — HUMANA</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --card-bg: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6b6b;
+    --accent: #2563eb;
+    --accent-soft: #eef2ff;
+    --border: #e5e7eb;
+    --success: #16a34a;
+    --success-soft: #dcfce7;
+    --warning: #d97706;
+    --warning-soft: #fef3c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111113; --card-bg: #1a1a1d; --text: #f2f2f3; --muted: #9a9a9f;
+      --accent: #60a5fa; --accent-soft: #1e293b; --border: #2c2c30;
+      --success: #4ade80; --success-soft: #14532d; --warning: #fbbf24; --warning-soft: #451a03;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111113; --card-bg: #1a1a1d; --text: #f2f2f3; --muted: #9a9a9f;
+    --accent: #60a5fa; --accent-soft: #1e293b; --border: #2c2c30;
+    --success: #4ade80; --success-soft: #14532d; --warning: #fbbf24; --warning-soft: #451a03;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5; padding: 2rem 1rem;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  header { margin-bottom: 1.5rem; }
+  header h1 { font-size: 1.6rem; margin: 0 0 0.25rem 0; }
+  header p { color: var(--muted); margin: 0; font-size: 0.9rem; }
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;
+  }
+  .card h2 { margin-top: 0; font-size: 1.1rem; }
+  .stats-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem;
+  }
+  .stat { background: var(--accent-soft); border-radius: 10px; padding: 1rem; }
+  .stat .value { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .stat .label { font-size: 0.82rem; color: var(--muted); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th, td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warning { background: var(--warning-soft); color: var(--warning); }
+  .state { text-align: center; padding: 3rem 1rem; color: var(--muted); }
+  .state.error { color: var(--warning); }
+  footer { text-align: center; color: var(--muted); font-size: 0.78rem; margin-top: 1.5rem; }
+  .refresh-btn {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 0.5rem 1rem; font-size: 0.85rem; cursor: pointer;
+  }
+  .refresh-btn:hover { opacity: 0.9; }
+  .charts-grid {
+    display: grid; grid-template-columns: 1fr 1.4fr; gap: 1.5rem;
+  }
+  @media (max-width: 640px) {
+    .charts-grid { grid-template-columns: 1fr; }
+  }
+  .chart-box { position: relative; height: 260px; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>💰 Recebimentos — HUMANA</h1>
+      <p>Contas a receber (schedules) via Anser Data Hub</p>
+    </header>
+
+    <div id="content">
+      <div class="state" id="loading-state">Carregando dados…</div>
+    </div>
+
+    <footer id="footer" style="display:none;">
+      Atualizado em <span id="updated-at"></span>
+      · <button class="refresh-btn" onclick="loadData()">Atualizar</button>
+    </footer>
+  </div>
+
+<script>
+  // ====== CONFIGURAÇÃO ======
+  // Hospedado no mesmo dominio da API -> URL relativa, sem cross-origin,
+  // sem CORS, sem restricao de file://. A chave continua necessaria porque
+  // a API exige x-api-key mesmo em same-origin (nao eh so um bloqueio de
+  // navegador, e uma autenticacao real do lado do servidor).
+  const API_KEY = "2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d";
+  const COMPANY_ID = "657cc464-100c-4b90-88c9-f21c76662e79"; // HUMANA
+  // ===========================
+
+  const contentEl = document.getElementById("content");
+  const footerEl = document.getElementById("footer");
+  const updatedAtEl = document.getElementById("updated-at");
+
+  function fmtCurrency(v) {
+    const n = Number(v);
+    if (isNaN(n)) return v ?? "—";
+    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  }
+
+  function fmtDate(d) {
+    if (!d) return "—";
+    try {
+      const date = new Date(d);
+      if (isNaN(date.getTime())) return d;
+      return date.toLocaleDateString("pt-BR");
+    } catch { return d; }
+  }
+
+  function pick(obj, keys) {
+    for (const k of keys) {
+      if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
+    }
+    return null;
+  }
+
+  async function loadData() {
+    contentEl.innerHTML = '<div class="state" id="loading-state">Carregando dados…</div>';
+    footerEl.style.display = "none";
+
+    try {
+      const url = `/api/data/nibo/schedules?companyId=${COMPANY_ID}&type=Credit&limit=200`;
+      const res = await fetch(url, {
+        headers: { "x-api-key": API_KEY }
+      });
+
+      if (!res.ok) {
+        throw new Error(`API retornou status ${res.status}`);
+      }
+
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (data.data || data.items || data.schedules || []);
+
+      if (!items.length) {
+        contentEl.innerHTML = '<div class="state">Nenhum recebimento encontrado para esse período.</div>';
+        footerEl.style.display = "block";
+        updatedAtEl.textContent = new Date().toLocaleString("pt-BR");
+        return;
+      }
+
+      render(items);
+      footerEl.style.display = "block";
+      updatedAtEl.textContent = new Date().toLocaleString("pt-BR");
+
+    } catch (err) {
+      console.error("Erro ao carregar dados:", err);
+      contentEl.innerHTML = `
+        <div class="state error">
+          ⚠️ Não foi possível carregar os dados.<br>
+          <small>${err.message}</small>
+        </div>`;
+      footerEl.style.display = "block";
+      updatedAtEl.textContent = new Date().toLocaleString("pt-BR");
+    }
+  }
+
+  function render(items) {
+    let total = 0;
+    let paidCount = 0;
+    let pendingCount = 0;
+    let paidTotal = 0;
+    let pendingTotal = 0;
+
+    const rows = items.map(item => {
+      const value = Number(pick(item, ["value", "amount", "total", "netValue"])) || 0;
+      const isPaid = pick(item, ["isPaid", "paid", "is_paid"]);
+      const dueDate = pick(item, ["dueDate", "due_date", "date"]);
+      const description = pick(item, ["description", "notes", "title", "reference"]) || "—";
+      const stakeholder = pick(item, ["stakeholderName", "stakeholder", "customerName", "supplierName"]) || "—";
+
+      total += value;
+      if (isPaid) { paidCount++; paidTotal += value; }
+      else { pendingCount++; pendingTotal += value; }
+
+      const badge = isPaid
+        ? '<span class="badge badge-success">Recebido</span>'
+        : '<span class="badge badge-warning">Pendente</span>';
+
+      return `
+        <tr>
+          <td>${fmtDate(dueDate)}</td>
+          <td>${stakeholder}</td>
+          <td>${description}</td>
+          <td>${fmtCurrency(value)}</td>
+          <td>${badge}</td>
+        </tr>`;
+    }).join("");
+
+    contentEl.innerHTML = `
+      <div class="card">
+        <h2>Resumo</h2>
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="value">${fmtCurrency(total)}</div>
+            <div class="label">Total (${items.length} itens)</div>
+          </div>
+          <div class="stat">
+            <div class="value">${fmtCurrency(paidTotal)}</div>
+            <div class="label">Recebido (${paidCount})</div>
+          </div>
+          <div class="stat">
+            <div class="value">${fmtCurrency(pendingTotal)}</div>
+            <div class="label">Pendente (${pendingCount})</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="charts-card" style="display:none;">
+        <h2>Gráficos</h2>
+        <div class="charts-grid">
+          <div class="chart-box"><canvas id="chart-status"></canvas></div>
+          <div class="chart-box"><canvas id="chart-monthly"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Lançamentos</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Vencimento</th>
+                <th>Cliente</th>
+                <th>Descrição</th>
+                <th>Valor</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+
+    // Graficos sao um extra: se o Chart.js nao carregou (bloqueio de rede/
+    // extensao no CDN externo), a tabela e os totais acima ja funcionam
+    // sozinhos, sem travar em nenhum erro.
+    if (typeof Chart !== "undefined") {
+      try {
+        document.getElementById("charts-card").style.display = "";
+        renderCharts(items, { total, paidTotal, pendingTotal });
+      } catch (err) {
+        console.error("Erro ao renderizar gráficos (dados continuam OK):", err);
+      }
+    } else {
+      console.warn("Chart.js não carregou (CDN bloqueado?) — mostrando só tabela e totais.");
+    }
+  }
+
+  let chartStatus, chartMonthly;
+
+  function isDarkMode() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function renderCharts(items, { paidTotal, pendingTotal }) {
+    const textColor = isDarkMode() ? "#f2f2f3" : "#1a1a1a";
+    const gridColor = isDarkMode() ? "#2c2c30" : "#e5e7eb";
+
+    const ctxStatus = document.getElementById("chart-status");
+    if (chartStatus) chartStatus.destroy();
+    chartStatus = new Chart(ctxStatus, {
+      type: "doughnut",
+      data: {
+        labels: ["Recebido", "Pendente"],
+        datasets: [{
+          data: [paidTotal, pendingTotal],
+          backgroundColor: ["#16a34a", "#d97706"],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "bottom", labels: { color: textColor } },
+          title: { display: true, text: "Recebido vs Pendente", color: textColor }
+        }
+      }
+    });
+
+    const monthly = {};
+    items.forEach(item => {
+      const value = Number(pick(item, ["value", "amount", "total", "netValue"])) || 0;
+      const dueDate = pick(item, ["dueDate", "due_date", "date"]);
+      if (!dueDate) return;
+      const d = new Date(dueDate);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      monthly[key] = (monthly[key] || 0) + value;
+    });
+    const sortedKeys = Object.keys(monthly).sort();
+    const labels = sortedKeys.map(k => {
+      const [y, m] = k.split("-");
+      return new Date(y, m - 1, 1).toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
+    });
+    const values = sortedKeys.map(k => monthly[k]);
+
+    const ctxMonthly = document.getElementById("chart-monthly");
+    if (chartMonthly) chartMonthly.destroy();
+    chartMonthly = new Chart(ctxMonthly, {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [{
+          label: "Total (R$)",
+          data: values,
+          backgroundColor: "#2563eb",
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          title: { display: true, text: "Total por mês de vencimento", color: textColor }
+        },
+        scales: {
+          x: { ticks: { color: textColor }, grid: { color: gridColor } },
+          y: { ticks: { color: textColor }, grid: { color: gridColor } }
+        }
+      }
+    });
+  }
+
+  loadData();
+</script>
+</body>
+</html>
