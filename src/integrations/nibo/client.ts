@@ -109,6 +109,17 @@ async function fetchJson<T>(url: string, headers: Record<string, string>): Promi
 // sempre que $skip é usado, senão retorna 500 ("the method 'Skip' is only
 // supported for sorted input... 'OrderBy' must be called before 'Skip'").
 // orderBy é obrigatório aqui de propósito, pra nunca esquecer de novo.
+//
+// IMPORTANTE #2: o Nibo às vezes devolve MAIS itens do que o $top pedido
+// (ex: pede 100, volta 101) — confirmado empiricamente em schedules/debit
+// da DACL. Avançar o $skip por PAGE_SIZE fixo e parar quando
+// items.length !== PAGE_SIZE faz a paginação achar que acabou bem antes do
+// fim de verdade, truncando a maior parte dos dados sem erro nenhum (o
+// full sync da DACL voltou só 101 de ~1000 registros reais por causa
+// disso). A correção: avançar o skip pelo tanto que REALMENTE veio na
+// página (não pelo PAGE_SIZE pedido), e só parar quando vier menos do que
+// foi pedido (ou zero) — assim nenhum item fica pulado, não importa quanto
+// a API decida devolver a mais.
 async function paginate<T>(
   buildUrl: (top: number, skip: number) => string,
   headers: Record<string, string>,
@@ -116,14 +127,16 @@ async function paginate<T>(
 ): Promise<T[]> {
   const all: T[] = []
   let page = 0
+  let skip = 0
   let hasMore = true
 
   while (hasMore && page < maxPages) {
-    const url = buildUrl(PAGE_SIZE, page * PAGE_SIZE)
+    const url = buildUrl(PAGE_SIZE, skip)
     const data = await fetchJson<NiboListResponse<T>>(url, headers)
     const items = data.items ?? data.value ?? []
     all.push(...items)
-    hasMore = items.length === PAGE_SIZE
+    hasMore = items.length >= PAGE_SIZE
+    skip += items.length
     page++
   }
 
