@@ -28,6 +28,10 @@ function dedupeByKey<T>(rows: T[], keyFn: (row: T) => string): T[] {
 // eliminam essa classe de erro pra qualquer cliente, não importa o tamanho.
 const UPSERT_CHUNK_SIZE = 200
 
+// Ids são passados na URL (query string) num delete .in(...), não no corpo,
+// então o limite prático é bem menor que o do upsert (que vai no corpo).
+const DELETE_CHUNK_SIZE = 100
+
 async function chunkedUpsert(table: string, rows: Record<string, unknown>[], onConflict: string): Promise<number> {
   if (rows.length === 0) return 0
   const supabase = getSupabase()
@@ -71,13 +75,22 @@ async function reconcileDeletes(params: {
   const toDelete = (data ?? []).map((r: any) => r[col]).filter((id: string) => !currentSet.has(id))
   if (toDelete.length === 0) return 0
 
-  let delQuery = supabase.from(params.table).delete().in(col, toDelete)
-  for (const [k, v] of Object.entries(params.match)) delQuery = delQuery.eq(k, v)
-  if (params.dateRange) {
-    delQuery = delQuery.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+  // Deleta em lotes: um .in(col, ids) com muitos ids vira uma URL enorme
+  // (PostgREST serializa o filtro na query string), e passado de ~8-10KB
+  // algum proxy no meio do caminho devolve 400 Bad Request sem explicação
+  // melhor. Isso já aconteceu em produção (schedules_debit da DACL tinha
+  // 800+ ids órfãos pra apagar de uma vez, ~30KB de URL). Lotes pequenos e
+  // fixos eliminam essa classe de erro pra qualquer volume de exclusões.
+  for (let i = 0; i < toDelete.length; i += DELETE_CHUNK_SIZE) {
+    const idsChunk = toDelete.slice(i, i + DELETE_CHUNK_SIZE)
+    let delQuery = supabase.from(params.table).delete().in(col, idsChunk)
+    for (const [k, v] of Object.entries(params.match)) delQuery = delQuery.eq(k, v)
+    if (params.dateRange) {
+      delQuery = delQuery.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+    }
+    const { error: delError } = await delQuery
+    if (delError) throw new Error(`delete ${params.table} (lote ${i}-${i + idsChunk.length}): ${delError.message}`)
   }
-  const { error: delError } = await delQuery
-  if (delError) throw new Error(delError.message)
   return toDelete.length
 }
 
