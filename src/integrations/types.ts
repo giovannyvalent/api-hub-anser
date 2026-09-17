@@ -1,6 +1,7 @@
 export interface SyncResourceResult {
   resource: string
   recordsSynced: number
+  error?: string
 }
 
 export interface SyncReport {

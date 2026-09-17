@@ -18,6 +18,27 @@ function dedupeByKey<T>(rows: T[], keyFn: (row: T) => string): T[] {
   return [...map.values()]
 }
 
+// Tamanho de lote pra qualquer upsert em massa. Sem isso, uma tabela que
+// cresce (ex: schedules de um cliente grande passando de milhares de linhas,
+// cada uma carregando o JSON bruto inteiro do Nibo em "raw") eventualmente
+// gera um payload único grande demais pra um POST só, e o Postgres/PostgREST
+// devolve "Bad Request" — erro que ficava silenciosamente engolido pelo
+// runResource como "sucesso, 0 registros". Isso já aconteceu em produção
+// (schedules_debit de DACL e Grow, 2026-09-16). Lotes pequenos e fixos
+// eliminam essa classe de erro pra qualquer cliente, não importa o tamanho.
+const UPSERT_CHUNK_SIZE = 200
+
+async function chunkedUpsert(table: string, rows: Record<string, unknown>[], onConflict: string): Promise<number> {
+  if (rows.length === 0) return 0
+  const supabase = getSupabase()
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK_SIZE) as any[]
+    const { error } = await supabase.from(table).upsert(chunk, { onConflict })
+    if (error) throw new Error(`upsert ${table} (lote ${i}-${i + chunk.length}): ${error.message}`)
+  }
+  return rows.length
+}
+
 // ============================================================================
 // Reconciliação de exclusões — o upsert nunca some com nada; se um registro
 // foi deletado no Nibo, ele só some da resposta da API, sem aviso. Isso
@@ -120,7 +141,7 @@ async function runResource(
     const message = err instanceof Error ? err.message : 'Unknown error'
     logger.error(`nibo sync "${resource}" (${mode}) falhou para company=${companyId}:`, message)
     await logSync({ companyId, resource, mode, status: 'error', recordsSynced: 0, errorMessage: message, startedAt })
-    return { resource, recordsSynced: 0 }
+    return { resource, recordsSynced: 0, error: message }
   }
 }
 
@@ -167,10 +188,7 @@ async function syncAccounts(companyId: string, client: NiboEmpresaClient) {
     synced_at: new Date().toISOString(),
   }))
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-  if (deduped.length > 0) {
-    const { error } = await supabase.from('nibo_accounts').upsert(deduped, { onConflict: 'company_id,nibo_id' })
-    if (error) throw new Error(error.message)
-  }
+  await chunkedUpsert('nibo_accounts', deduped, 'company_id,nibo_id')
   await reconcileDeletes({ table: 'nibo_accounts', match: { company_id: companyId }, currentNiboIds: accounts.map((a) => a.id) })
   return deduped.length
 }
@@ -195,10 +213,7 @@ async function syncCategories(companyId: string, client: NiboEmpresaClient) {
     synced_at: new Date().toISOString(),
   }))
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-  if (deduped.length > 0) {
-    const { error } = await supabase.from('nibo_categories').upsert(deduped, { onConflict: 'company_id,nibo_id' })
-    if (error) throw new Error(error.message)
-  }
+  await chunkedUpsert('nibo_categories', deduped, 'company_id,nibo_id')
   await reconcileDeletes({ table: 'nibo_categories', match: { company_id: companyId }, currentNiboIds: categories.map((c) => c.id) })
   return deduped.length
 }
@@ -217,10 +232,7 @@ async function syncCostCenters(companyId: string, client: NiboEmpresaClient) {
     synced_at: new Date().toISOString(),
   }))
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-  if (deduped.length > 0) {
-    const { error } = await supabase.from('nibo_cost_centers').upsert(deduped, { onConflict: 'company_id,nibo_id' })
-    if (error) throw new Error(error.message)
-  }
+  await chunkedUpsert('nibo_cost_centers', deduped, 'company_id,nibo_id')
   await reconcileDeletes({ table: 'nibo_cost_centers', match: { company_id: companyId }, currentNiboIds: costCenters.map((c) => c.costCenterId) })
   return deduped.length
 }
@@ -251,8 +263,7 @@ async function syncStakeholders(companyId: string, client: NiboEmpresaClient, ki
   }))
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
   if (deduped.length > 0) {
-    const { error } = await supabase.from('nibo_stakeholders').upsert(deduped, { onConflict: 'company_id,kind,nibo_id' })
-    if (error) throw new Error(error.message)
+    await chunkedUpsert('nibo_stakeholders', deduped, 'company_id,kind,nibo_id')
   }
   await reconcileDeletes({
     table: 'nibo_stakeholders',
@@ -311,10 +322,7 @@ async function syncUsers(companyId: string, client: NiboEmpresaClient) {
     synced_at: new Date().toISOString(),
   }))
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-  if (deduped.length > 0) {
-    const { error } = await supabase.from('nibo_users').upsert(deduped, { onConflict: 'company_id,nibo_id' })
-    if (error) throw new Error(error.message)
-  }
+  await chunkedUpsert('nibo_users', deduped, 'company_id,nibo_id')
   await reconcileDeletes({ table: 'nibo_users', match: { company_id: companyId }, currentNiboIds: users.map((u) => u.id) })
   return deduped.length
 }
@@ -391,12 +399,7 @@ async function syncStatementForAccounts(
       synced_at: new Date().toISOString(),
     }))
     const deduped = dedupeByKey(rows, (r) => r.entry_key)
-    if (deduped.length > 0) {
-      const { error } = await supabase
-        .from('nibo_statement')
-        .upsert(deduped, { onConflict: 'company_id,account_nibo_id,entry_key' })
-      if (error) throw new Error(error.message)
-    }
+    await chunkedUpsert('nibo_statement', deduped, 'company_id,account_nibo_id,entry_key')
     await reconcileDeletes({
       table: 'nibo_statement',
       match: { company_id: companyId, account_nibo_id: accountId },
@@ -466,11 +469,7 @@ function scheduleRows(companyId: string, schedules: Awaited<ReturnType<NiboEmpre
 
 async function upsertSchedules(rows: ReturnType<typeof scheduleRows>) {
   const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-  if (deduped.length === 0) return 0
-  const supabase = getSupabase()
-  const { error } = await supabase.from('nibo_schedules').upsert(deduped, { onConflict: 'company_id,nibo_id' })
-  if (error) throw new Error(error.message)
-  return deduped.length
+  return chunkedUpsert('nibo_schedules', deduped, 'company_id,nibo_id')
 }
 
 // ============================================================================
@@ -603,7 +602,6 @@ export async function syncCompanyNiboIncremental(companyId: string, apiToken: st
 
 export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncReport> {
   const startedAt = new Date().toISOString()
-  const supabase = getSupabase()
   const client = new NiboAccountantClient()
 
   const results: SyncResourceResult[] = []
@@ -620,10 +618,7 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
         synced_at: new Date().toISOString(),
       }))
       const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-      if (deduped.length > 0) {
-        const { error } = await supabase.from('nibo_firm_customers').upsert(deduped, { onConflict: 'nibo_id' })
-        if (error) throw new Error(error.message)
-      }
+      await chunkedUpsert('nibo_firm_customers', deduped, 'nibo_id')
       await reconcileDeletes({ table: 'nibo_firm_customers', match: {}, currentNiboIds: customers.map((c) => c.id) })
       return deduped.length
     }),
@@ -648,10 +643,7 @@ export async function syncFirmNibo(referenceDate = new Date()): Promise<SyncRepo
         synced_at: new Date().toISOString(),
       }))
       const deduped = dedupeByKey(rows, (r) => r.nibo_id)
-      if (deduped.length > 0) {
-        const { error } = await supabase.from('nibo_firm_tasks').upsert(deduped, { onConflict: 'nibo_id' })
-        if (error) throw new Error(error.message)
-      }
+      await chunkedUpsert('nibo_firm_tasks', deduped, 'nibo_id')
       await reconcileDeletes({
         table: 'nibo_firm_tasks',
         match: { dead_line: deadLine },
