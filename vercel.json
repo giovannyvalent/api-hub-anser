@@ -6,5 +6,8 @@
   "crons": [
     { "path": "/api/cron/sync-nibo-financial", "schedule": "30 6 * * *" },
     { "path": "/api/cron/sync-nibo-full", "schedule": "0 6 * * *" }
-  ]
+  ],
+  "functions": {
+    "api/index.ts": { "maxDuration": 300 }
+  }
 }
