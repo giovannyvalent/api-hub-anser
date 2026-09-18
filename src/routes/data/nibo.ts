@@ -85,6 +85,25 @@ niboDataRouter.get(
   }),
 )
 
+// GET /api/data/nibo/schedules-summary?companyId=&type=Debit|Credit&from=&to=
+// Totais agregados (valor total/aberto/pago + série mensal) — pensado pra
+// relatório/dashboard, pra não precisar mandar milhares de linhas cruas
+// pro navegador só pra somar lá.
+niboDataRouter.get(
+  '/api/data/nibo/schedules-summary',
+  asyncHandler(async (req, res) => {
+    const companyId = requireCompanyId(req, res)
+    if (!companyId) return
+    const { type, from, to } = req.query
+    const data = await niboData.getSchedulesSummary(companyId, {
+      type: type ? String(type) : undefined,
+      from: from ? String(from) : undefined,
+      to: to ? String(to) : undefined,
+    })
+    res.json({ data })
+  }),
+)
+
 // GET /api/data/nibo/stakeholders?companyId=&kind=customer|supplier|partner|employee
 niboDataRouter.get(
   '/api/data/nibo/stakeholders',

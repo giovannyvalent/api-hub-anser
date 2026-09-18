@@ -184,6 +184,80 @@ export async function getSchedules(
   return { data: data ?? [], count: count ?? 0, limit, offset }
 }
 
+// Resumo agregado de schedules (totais + série mensal), pensado pra
+// alimentar relatório/dashboard sem precisar mandar milhares de linhas pro
+// navegador. A soma é feita aqui no servidor, paginando em lotes de 1000 —
+// esse projeto Supabase tem funções de agregação (sum/count via SQL)
+// desativadas no PostgREST, então não dá pra pedir a soma pronta num select
+// só; paginar com só as colunas necessárias ainda é rápido (poucos KB por
+// página) mesmo pra um cliente grande (ex: VICOFARMA, ~32 mil lançamentos).
+export async function getSchedulesSummary(
+  companyId: string,
+  opts: { type?: string; from?: string; to?: string } = {},
+) {
+  const supabase = getSupabase()
+  const monthly = new Map<
+    string,
+    { month: string; total: number; open: number; paid: number; countOpen: number; countPaid: number }
+  >()
+  let totalValue = 0
+  let totalOpen = 0
+  let totalPaid = 0
+  let countOpen = 0
+  let countPaid = 0
+
+  const pageSize = 1000
+  let from_ = 0
+  while (true) {
+    let query = supabase
+      .from('nibo_schedules')
+      .select('value, open_value, paid_value, is_paid, due_date')
+      .eq('company_id', companyId)
+    if (opts.type) query = query.eq('type', opts.type)
+    if (opts.from) query = query.gte('due_date', opts.from)
+    if (opts.to) query = query.lte('due_date', opts.to)
+
+    const { data, error } = await query.range(from_, from_ + pageSize - 1)
+    if (error) throw new Error(error.message)
+    if (!data || data.length === 0) break
+
+    for (const row of data as any[]) {
+      // paid_value do Nibo vem negativo pra Debit (saída de caixa) — usa
+      // valor absoluto pra somar de forma consistente entre Debit/Credit.
+      const value = Math.abs(Number(row.value) || 0)
+      const open = Math.abs(Number(row.open_value) || 0)
+      const paid = Math.abs(Number(row.paid_value) || 0)
+      totalValue += value
+      totalOpen += open
+      totalPaid += paid
+      if (row.is_paid) countPaid++
+      else countOpen++
+
+      const month = String(row.due_date ?? '').slice(0, 7) || 'sem-data'
+      const m = monthly.get(month) ?? { month, total: 0, open: 0, paid: 0, countOpen: 0, countPaid: 0 }
+      m.total += value
+      m.open += open
+      m.paid += paid
+      if (row.is_paid) m.countPaid++
+      else m.countOpen++
+      monthly.set(month, m)
+    }
+
+    if (data.length < pageSize) break
+    from_ += pageSize
+  }
+
+  return {
+    totalValue,
+    totalOpen,
+    totalPaid,
+    countOpen,
+    countPaid,
+    count: countOpen + countPaid,
+    monthly: [...monthly.values()].sort((a, b) => a.month.localeCompare(b.month)),
+  }
+}
+
 export async function getFirmCustomers() {
   const supabase = getSupabase()
   const { data, error } = await supabase.from('nibo_firm_customers').select('*').order('name')
