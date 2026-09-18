@@ -56,7 +56,12 @@ syncRouter.post(
       return res.status(400).json({ error: `recurso inválido. Use um de: ${FULL_SYNC_RESOURCE_NAMES.join(', ')}` })
     }
     const apiToken = await getApiToken(companyId)
-    const report = await syncCompanyNiboFullResource(companyId, apiToken, resource)
+    // from/to opcionais: fatiam a janela padrão de 48 meses em pedaços
+    // menores, pra clientes grandes o suficiente pra estourar 300s mesmo
+    // com o recurso isolado (só vale pra schedules_debit/schedules_credit).
+    const { from, to } = req.query
+    const range = typeof from === 'string' && typeof to === 'string' ? { from, to } : undefined
+    const report = await syncCompanyNiboFullResource(companyId, apiToken, resource, range)
     res.json({ data: report })
   }),
 )

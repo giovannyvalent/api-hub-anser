@@ -501,9 +501,19 @@ function wideDateWindow() {
   return { now, from: fmt(from), to: fmt(to) }
 }
 
-async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient, kind: 'debit' | 'credit') {
-  const { from, to } = wideDateWindow()
-  const cursorTimestamp = new Date().toISOString()
+// Aceita from/to pra permitir fatiar a janela ampla em pedaços menores —
+// necessário pra clientes com volume grande o suficiente pra estourar os
+// 300s da função mesmo isolando esse recurso sozinho (ex: VICOFARMA, mais
+// de 10 mil lançamentos de "a pagar"). reconcileDeletes fica corretamente
+// escopado à fatia: rodar todas as fatias em sequência reconcilia a janela
+// inteira, sem risco de apagar algo que só está fora da fatia atual.
+async function syncScheduleKindRange(
+  companyId: string,
+  client: NiboEmpresaClient,
+  kind: 'debit' | 'credit',
+  from: string,
+  to: string,
+) {
   const schedules = await client.listSchedules(kind, { from, to }, 300)
   const count = await upsertSchedules(scheduleRows(companyId, schedules))
   await reconcileDeletes({
@@ -512,8 +522,13 @@ async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient
     currentNiboIds: schedules.map((s) => s.scheduleId),
     dateRange: { column: 'due_date', gte: from, lte: to },
   })
-  await setCursor(companyId, `schedules_${kind}`, cursorTimestamp)
+  await setCursor(companyId, `schedules_${kind}`, new Date().toISOString())
   return count
+}
+
+async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient, kind: 'debit' | 'credit') {
+  const { from, to } = wideDateWindow()
+  return syncScheduleKindRange(companyId, client, kind, from, to)
 }
 
 async function syncStatementFull(companyId: string, client: NiboEmpresaClient) {
@@ -583,11 +598,16 @@ export async function syncCompanyNiboFullResource(
   companyId: string,
   apiToken: string,
   resource: string,
+  range?: { from: string; to: string },
 ): Promise<SyncReport> {
   const startedAt = new Date().toISOString()
-  const fn = FULL_SYNC_RESOURCES[resource]
-  if (!fn) throw Object.assign(new Error(`recurso desconhecido: ${resource}`), { status: 400 })
   const client = new NiboEmpresaClient(apiToken)
+
+  let fn = FULL_SYNC_RESOURCES[resource]
+  if (range && resource === 'schedules_debit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'debit', range.from, range.to)
+  if (range && resource === 'schedules_credit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'credit', range.from, range.to)
+  if (!fn) throw Object.assign(new Error(`recurso desconhecido: ${resource}`), { status: 400 })
+
   const result = await runResource(companyId, resource, 'full', () => fn(companyId, client))
   return { platform: 'nibo', companyId, results: [result], startedAt, finishedAt: new Date().toISOString() }
 }
