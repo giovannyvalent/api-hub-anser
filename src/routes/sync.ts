@@ -2,9 +2,11 @@ import { Router } from 'express'
 import { getSupabase } from '../lib/supabase.js'
 import { asyncHandler } from '../middleware/errorHandler.js'
 import {
+  FULL_SYNC_RESOURCE_NAMES,
   syncAllCompaniesNiboFull,
   syncAllCompaniesNiboIncremental,
   syncCompanyNiboFull,
+  syncCompanyNiboFullResource,
   syncCompanyNiboIncremental,
   syncFirmNibo,
 } from '../integrations/nibo/sync.js'
@@ -36,6 +38,25 @@ syncRouter.post(
     const companyId = String(req.params.companyId)
     const apiToken = await getApiToken(companyId)
     const report = await syncCompanyNiboFull(companyId, apiToken)
+    res.json({ data: report })
+  }),
+)
+
+// POST /api/sync/nibo/:companyId/full/:resource — full sync de UM recurso só.
+// Útil pra clientes grandes o suficiente pra estourar os 300s da função
+// fazendo o full sync inteiro numa chamada: dá pra rodar recurso por
+// recurso, cada chamada com seu próprio orçamento de 300s. Recursos válidos
+// em FULL_SYNC_RESOURCE_NAMES (accounts, categories, schedules_debit, etc).
+syncRouter.post(
+  '/api/sync/nibo/:companyId/full/:resource',
+  asyncHandler(async (req, res) => {
+    const companyId = String(req.params.companyId)
+    const resource = String(req.params.resource)
+    if (!FULL_SYNC_RESOURCE_NAMES.includes(resource)) {
+      return res.status(400).json({ error: `recurso inválido. Use um de: ${FULL_SYNC_RESOURCE_NAMES.join(', ')}` })
+    }
+    const apiToken = await getApiToken(companyId)
+    const report = await syncCompanyNiboFullResource(companyId, apiToken, resource)
     res.json({ data: report })
   }),
 )

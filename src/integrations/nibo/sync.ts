@@ -490,78 +490,106 @@ async function upsertSchedules(rows: ReturnType<typeof scheduleRows>) {
 // Pesado: rodar 1x/dia (ou sob demanda), não a cada poucos minutos.
 // ============================================================================
 
-export async function syncCompanyNiboFull(companyId: string, apiToken: string): Promise<SyncReport> {
-  const startedAt = new Date().toISOString()
-  const client = new NiboEmpresaClient(apiToken)
-  const results: SyncResourceResult[] = []
-
-  results.push(await runResource(companyId, 'accounts', 'full', () => syncAccounts(companyId, client)))
-  results.push(await runResource(companyId, 'categories', 'full', () => syncCategories(companyId, client)))
-  results.push(await runResource(companyId, 'cost_centers', 'full', () => syncCostCenters(companyId, client)))
-  results.push(await runResource(companyId, 'organization', 'full', () => syncOrganization(companyId, client)))
-  results.push(await runResource(companyId, 'users', 'full', () => syncUsers(companyId, client)))
-
-  for (const kind of STAKEHOLDER_KINDS) {
-    results.push(
-      await runResource(companyId, `stakeholders_${kind}`, 'full', () => syncStakeholders(companyId, client, kind)),
-    )
-  }
-
-  results.push(await runResource(companyId, 'account_balances', 'full', () => syncAccountBalances(companyId, client)))
-
-  // Janela ampla: 24 meses atrás até 24 meses à frente.
+// Janela ampla padrão do full sync: 24 meses atrás até 24 meses à frente.
+function wideDateWindow() {
   const now = new Date()
   const from = new Date(now)
   from.setMonth(from.getMonth() - 24)
   const to = new Date(now)
   to.setMonth(to.getMonth() + 24)
   const fmt = (d: Date) => d.toISOString().split('T')[0]
+  return { now, from: fmt(from), to: fmt(to) }
+}
 
+async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient, kind: 'debit' | 'credit') {
+  const { from, to } = wideDateWindow()
   const cursorTimestamp = new Date().toISOString()
+  const schedules = await client.listSchedules(kind, { from, to }, 300)
+  const count = await upsertSchedules(scheduleRows(companyId, schedules))
+  await reconcileDeletes({
+    table: 'nibo_schedules',
+    match: { company_id: companyId, type: kind === 'debit' ? 'Debit' : 'Credit' },
+    currentNiboIds: schedules.map((s) => s.scheduleId),
+    dateRange: { column: 'due_date', gte: from, lte: to },
+  })
+  await setCursor(companyId, `schedules_${kind}`, cursorTimestamp)
+  return count
+}
 
-  for (const kind of ['debit', 'credit'] as const) {
-    results.push(
-      await runResource(companyId, `schedules_${kind}`, 'full', async () => {
-        const schedules = await client.listSchedules(kind, { from: fmt(from), to: fmt(to) }, 300)
-        const count = await upsertSchedules(scheduleRows(companyId, schedules))
-        await reconcileDeletes({
-          table: 'nibo_schedules',
-          match: { company_id: companyId, type: kind === 'debit' ? 'Debit' : 'Credit' },
-          currentNiboIds: schedules.map((s) => s.scheduleId),
-          dateRange: { column: 'due_date', gte: fmt(from), lte: fmt(to) },
-        })
-        await setCursor(companyId, `schedules_${kind}`, cursorTimestamp)
-        return count
-      }),
-    )
+async function syncStatementFull(companyId: string, client: NiboEmpresaClient) {
+  const { now, from: standardFrom, to } = wideDateWindow()
+  // Inclui contas arquivadas também — o extrato histórico delas continua
+  // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
+  // Qualquer conta (ativa ou arquivada) cuja data de abertura real
+  // (dateOfOpenBalance) seja mais antiga que a janela padrão de 24 meses
+  // usa a data de abertura como "from" — senão o começo do histórico
+  // dela fica de fora. Ex: "04 - Cartão de Crédito" abriu em 2024-02-28,
+  // ~6 meses antes da janela padrão, e ficava sem esses 6 meses iniciais.
+  // Arquivada sem dateOfOpenBalance cai num fallback bem largo (10 anos).
+  const niboAccounts = await client.listAccounts()
+  const wideFrom = new Date(now)
+  wideFrom.setFullYear(wideFrom.getFullYear() - 10)
+  const fmt = (d: Date) => d.toISOString().split('T')[0]
+  const accountRanges = niboAccounts.map((a) => {
+    const openDate = a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : null
+    let effectiveFrom = standardFrom
+    if (openDate && openDate < standardFrom) effectiveFrom = openDate
+    else if (a.isArchived && !openDate) effectiveFrom = fmt(wideFrom)
+    return { id: a.id, from: effectiveFrom, to }
+  })
+  return syncStatementForAccounts(companyId, client, accountRanges)
+}
+
+// Mapa recurso -> função de sync, usado tanto pelo full sync completo quanto
+// pelo sync de UM recurso isolado (ver syncCompanyNiboFullResource). Existe
+// porque um cliente grande (muitas contas bancárias, muitos lançamentos)
+// pode fazer o full sync inteiro passar dos 300s de limite da função
+// serverless — nesse caso dá pra rodar recurso por recurso, em chamadas
+// HTTP separadas, sem nenhuma delas depender do tempo total do full sync.
+const FULL_SYNC_RESOURCES: Record<string, (companyId: string, client: NiboEmpresaClient) => Promise<number>> = {
+  accounts: syncAccounts,
+  categories: syncCategories,
+  cost_centers: syncCostCenters,
+  organization: syncOrganization,
+  users: syncUsers,
+  stakeholders_customer: (companyId, client) => syncStakeholders(companyId, client, 'customer'),
+  stakeholders_supplier: (companyId, client) => syncStakeholders(companyId, client, 'supplier'),
+  stakeholders_partner: (companyId, client) => syncStakeholders(companyId, client, 'partner'),
+  stakeholders_employee: (companyId, client) => syncStakeholders(companyId, client, 'employee'),
+  account_balances: syncAccountBalances,
+  schedules_debit: (companyId, client) => syncScheduleKindFull(companyId, client, 'debit'),
+  schedules_credit: (companyId, client) => syncScheduleKindFull(companyId, client, 'credit'),
+  statement: syncStatementFull,
+}
+
+export const FULL_SYNC_RESOURCE_NAMES = Object.keys(FULL_SYNC_RESOURCES)
+
+export async function syncCompanyNiboFull(companyId: string, apiToken: string): Promise<SyncReport> {
+  const startedAt = new Date().toISOString()
+  const client = new NiboEmpresaClient(apiToken)
+  const results: SyncResourceResult[] = []
+
+  for (const [resource, fn] of Object.entries(FULL_SYNC_RESOURCES)) {
+    results.push(await runResource(companyId, resource, 'full', () => fn(companyId, client)))
   }
 
-  results.push(
-    await runResource(companyId, 'statement', 'full', async () => {
-      // Inclui contas arquivadas também — o extrato histórico delas continua
-      // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
-      // Qualquer conta (ativa ou arquivada) cuja data de abertura real
-      // (dateOfOpenBalance) seja mais antiga que a janela padrão de 24 meses
-      // usa a data de abertura como "from" — senão o começo do histórico
-      // dela fica de fora. Ex: "04 - Cartão de Crédito" abriu em 2024-02-28,
-      // ~6 meses antes da janela padrão, e ficava sem esses 6 meses iniciais.
-      // Arquivada sem dateOfOpenBalance cai num fallback bem largo (10 anos).
-      const niboAccounts = await client.listAccounts()
-      const wideFrom = new Date(now)
-      wideFrom.setFullYear(wideFrom.getFullYear() - 10)
-      const standardFrom = fmt(from)
-      const accountRanges = niboAccounts.map((a) => {
-        const openDate = a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : null
-        let effectiveFrom = standardFrom
-        if (openDate && openDate < standardFrom) effectiveFrom = openDate
-        else if (a.isArchived && !openDate) effectiveFrom = fmt(wideFrom)
-        return { id: a.id, from: effectiveFrom, to: fmt(to) }
-      })
-      return syncStatementForAccounts(companyId, client, accountRanges)
-    }),
-  )
-
   return { platform: 'nibo', companyId, results, startedAt, finishedAt: new Date().toISOString() }
+}
+
+// Roda o full sync de UM recurso só (ver FULL_SYNC_RESOURCE_NAMES) — pra
+// clientes grandes o suficiente pra estourar o limite de 300s fazendo tudo
+// numa chamada só. Usado pela rota /api/sync/nibo/:companyId/full/:resource.
+export async function syncCompanyNiboFullResource(
+  companyId: string,
+  apiToken: string,
+  resource: string,
+): Promise<SyncReport> {
+  const startedAt = new Date().toISOString()
+  const fn = FULL_SYNC_RESOURCES[resource]
+  if (!fn) throw Object.assign(new Error(`recurso desconhecido: ${resource}`), { status: 400 })
+  const client = new NiboEmpresaClient(apiToken)
+  const result = await runResource(companyId, resource, 'full', () => fn(companyId, client))
+  return { platform: 'nibo', companyId, results: [result], startedAt, finishedAt: new Date().toISOString() }
 }
 
 // ============================================================================
