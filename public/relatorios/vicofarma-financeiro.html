@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relatório Financeiro — VICOFARMA</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --good:           #0ca30c;
+    --good-soft:      #e5f6e5;
+    --warning:        #fab219;
+    --warning-soft:   #fef3da;
+    --blue:           #2a78d6;
+    --blue-soft:      #e8f0fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --good-soft:      #123312;
+      --warning-soft:   #3a2c0a;
+      --blue:           #3987e5;
+      --blue-soft:      #14243a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --good-soft:      #123312;
+    --warning-soft:   #3a2c0a;
+    --blue:           #3987e5;
+    --blue-soft:      #14243a;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5; padding: 2rem 1rem 4rem;
+  }
+  .container { max-width: 1000px; margin: 0 auto; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.75rem; flex-wrap: wrap; }
+  header h1 { font-size: 1.5rem; margin: 0 0 0.25rem 0; }
+  header p { color: var(--text-secondary); margin: 0; font-size: 0.88rem; }
+  #theme-toggle {
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary);
+    border-radius: 8px; padding: 0.4rem 0.7rem; font-size: 0.8rem; cursor: pointer;
+  }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem;
+  }
+  .card h2 { margin: 0 0 0.2rem 0; font-size: 1.05rem; }
+  .card .card-sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 1.1rem 0; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.9rem; margin-bottom: 1.4rem; }
+  .stat { border-radius: 10px; padding: 0.9rem 1rem; }
+  .stat .label { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
+  .stat .value { font-size: 1.35rem; font-weight: 600; }
+  .stat .sub { font-size: 0.74rem; color: var(--text-muted); margin-top: 0.15rem; }
+  .stat-total { background: var(--blue-soft); }
+  .stat-total .value { color: var(--blue); }
+  .stat-open { background: var(--warning-soft); }
+  .stat-paid { background: var(--good-soft); }
+
+  .chart-wrap { position: relative; height: 260px; margin-bottom: 0.6rem; }
+  .legend { display: flex; gap: 1.25rem; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.9rem; }
+  .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  .table-toggle {
+    background: none; border: none; color: var(--blue); font-size: 0.82rem; cursor: pointer;
+    padding: 0; margin-top: 0.4rem;
+  }
+  .table-wrap { overflow-x: auto; margin-top: 0.8rem; display: none; }
+  .table-wrap.open { display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  th, td { text-align: right; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--gridline); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; font-variant-numeric: normal; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.02em; }
+
+  .state { text-align: center; padding: 3rem 1rem; color: var(--text-secondary); }
+  .state.error { color: var(--warning); }
+  footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; margin-top: 2rem; }
+
+  .skeleton { background: linear-gradient(90deg, var(--gridline) 25%, var(--surface-1) 37%, var(--gridline) 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: 8px; }
+  @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1>Relatório Financeiro — VICOFARMA</h1>
+      <p>Contas a pagar e a receber, sincronizado direto do Nibo</p>
+    </div>
+    <button id="theme-toggle" onclick="toggleTheme()">Alternar tema</button>
+  </header>
+
+  <div id="loading" class="state">
+    <div class="skeleton" style="height:90px;border-radius:12px;margin-bottom:1rem"></div>
+    <div class="skeleton" style="height:260px;border-radius:12px"></div>
+  </div>
+  <div id="error" class="state error" style="display:none"></div>
+  <div id="content" style="display:none"></div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const API_BASE = ""; // mesma origem — hospedado em /relatorios/, sem CORS
+const COMPANY_ID = "ab6d7bb8-73da-44ae-82b6-27c16ae24c1c"; // VICOFARMA
+const HUB_API_KEY = "2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d";
+
+const MONTH_NAMES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+function fmtMonth(ym) {
+  const [y, m] = ym.split("-");
+  return `${MONTH_NAMES[Number(m) - 1]}/${y.slice(2)}`;
+}
+function fmtBRL(n) {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+}
+
+function toggleTheme() {
+  const root = document.documentElement;
+  const current = root.getAttribute("data-theme");
+  const next = current === "dark" ? "light" : "dark";
+  root.setAttribute("data-theme", next);
+  try { localStorage.setItem("vicofarma-theme", next); } catch (e) {}
+  redrawCharts();
+}
+(function initTheme() {
+  try {
+    const saved = localStorage.getItem("vicofarma-theme");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
+  } catch (e) {}
+})();
+
+function isDark() {
+  const attr = document.documentElement.getAttribute("data-theme");
+  if (attr === "dark") return true;
+  if (attr === "light") return false;
+  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+const charts = [];
+function redrawCharts() {
+  charts.forEach((c) => c.destroy());
+  charts.length = 0;
+  renderCharts();
+}
+
+let LAST_DATA = null;
+
+async function fetchSummary(type) {
+  const url = `${API_BASE}/api/data/nibo/schedules-summary?companyId=${COMPANY_ID}&type=${type}`;
+  const res = await fetch(url, { headers: { "x-api-key": HUB_API_KEY } });
+  if (!res.ok) throw new Error(`Falha ao buscar ${type}: HTTP ${res.status}`);
+  const json = await res.json();
+  return json.data;
+}
+
+function statTile(cls, label, value, sub) {
+  return `<div class="stat ${cls}">
+    <div class="label">${label}</div>
+    <div class="value">${value}</div>
+    ${sub ? `<div class="sub">${sub}</div>` : ""}
+  </div>`;
+}
+
+function section(id, title, sub, summary, openLabel, paidLabel) {
+  return `
+  <div class="card">
+    <h2>${title}</h2>
+    <p class="card-sub">${sub}</p>
+    <div class="stats-grid">
+      ${statTile("stat-total", "Valor total", fmtBRL(summary.totalValue), `${summary.count.toLocaleString("pt-BR")} lançamentos`)}
+      ${statTile("stat-open", openLabel, fmtBRL(summary.totalOpen), `${summary.countOpen.toLocaleString("pt-BR")} lançamentos`)}
+      ${statTile("stat-paid", paidLabel, fmtBRL(summary.totalPaid), `${summary.countPaid.toLocaleString("pt-BR")} lançamentos`)}
+    </div>
+    <div class="legend">
+      <span class="legend-item"><span class="legend-dot" style="background:var(--warning)"></span>${openLabel}</span>
+      <span class="legend-item"><span class="legend-dot" style="background:var(--good)"></span>${paidLabel}</span>
+    </div>
+    <div class="chart-wrap"><canvas id="chart-${id}"></canvas></div>
+    <button class="table-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.textContent.startsWith('Ver') ? 'Ocultar tabela mensal' : 'Ver tabela mensal'">Ver tabela mensal</button>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mês</th><th>${openLabel}</th><th>${paidLabel}</th><th>Total</th></tr></thead>
+        <tbody>
+          ${summary.monthly.map((m) => `<tr><td>${fmtMonth(m.month)}</td><td>${fmtBRL(m.open)}</td><td>${fmtBRL(m.paid)}</td><td>${fmtBRL(m.total)}</td></tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function renderCharts() {
+  if (!LAST_DATA) return;
+  const dark = isDark();
+  const gridline = dark ? "#2c2c2a" : "#e1e0d9";
+  const muted = "#898781";
+  const surface = dark ? "#1a1a19" : "#fcfcfb";
+
+  [["debit", LAST_DATA.debit], ["credit", LAST_DATA.credit]].forEach(([id, summary]) => {
+    const canvas = document.getElementById(`chart-${id}`);
+    if (!canvas || typeof Chart === "undefined") return;
+    try {
+      const labels = summary.monthly.map((m) => fmtMonth(m.month));
+      const chart = new Chart(canvas.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            { label: "Pago", data: summary.monthly.map((m) => m.paid), backgroundColor: "#0ca30c", stack: "s", borderColor: surface, borderWidth: 2, borderRadius: 3, maxBarThickness: 24 },
+            { label: "Em aberto", data: summary.monthly.map((m) => m.open), backgroundColor: "#fab219", stack: "s", borderColor: surface, borderWidth: 2, borderRadius: 3, maxBarThickness: 24 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtBRL(ctx.parsed.y)}` } } },
+          scales: {
+            x: { stacked: true, grid: { display: false }, ticks: { color: muted, font: { size: 11 } } },
+            y: { stacked: true, grid: { color: gridline }, ticks: { color: muted, font: { size: 11 }, callback: (v) => fmtBRL(v) } },
+          },
+        },
+      });
+      charts.push(chart);
+    } catch (e) {
+      canvas.parentElement.innerHTML = `<p style="color:var(--text-muted);font-size:0.85rem">Gráfico indisponível — dados na tabela abaixo.</p>`;
+    }
+  });
+}
+
+async function main() {
+  try {
+    const [debit, credit] = await Promise.all([fetchSummary("Debit"), fetchSummary("Credit")]);
+    LAST_DATA = { debit, credit };
+
+    document.getElementById("content").innerHTML =
+      section("debit", "Contas a Pagar", "Janela de 48 meses (24 meses atrás a 24 meses à frente)", debit, "Em aberto", "Pago") +
+      section("credit", "Contas a Receber", "Janela de 48 meses (24 meses atrás a 24 meses à frente)", credit, "Em aberto", "Recebido");
+
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("content").style.display = "block";
+    document.getElementById("footer").textContent = `Gerado em ${new Date().toLocaleString("pt-BR")} · dados: Anser Data Hub`;
+
+    renderCharts();
+  } catch (err) {
+    document.getElementById("loading").style.display = "none";
+    const errEl = document.getElementById("error");
+    errEl.style.display = "block";
+    errEl.textContent = `Não foi possível carregar os dados: ${err.message}`;
+  }
+}
+main();
+</script>
+</body>
+</html>
