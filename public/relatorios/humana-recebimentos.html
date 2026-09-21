@@ -99,7 +99,9 @@
   // sem CORS, sem restricao de file://. A chave continua necessaria porque
   // a API exige x-api-key mesmo em same-origin (nao eh so um bloqueio de
   // navegador, e uma autenticacao real do lado do servidor).
-  const API_KEY = "2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d";
+  // Chave só-leitura (não abre escrita/sync/credenciais) — feita pra ficar
+  // em páginas públicas como esta. Ver src/middleware/apiKeyAuth.ts.
+  const API_KEY = "fe629d8070ea1e02b8e212a620cae15e036a9675e22a3647e130d688233706ed";
   const COMPANY_ID = "657cc464-100c-4b90-88c9-f21c76662e79"; // HUMANA
   // ===========================
 

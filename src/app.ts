@@ -1,5 +1,5 @@
 import express from 'express'
-import { apiKeyAuth } from './middleware/apiKeyAuth.js'
+import { apiKeyAuth, dataKeyAuth } from './middleware/apiKeyAuth.js'
 import { cronAuth } from './middleware/cronAuth.js'
 import { errorHandler } from './middleware/errorHandler.js'
 import { healthRouter } from './routes/health.js'
@@ -41,12 +41,19 @@ app.use('/api/cron', cronAuth, cronRouter)
 // somente leitura, é o que os conectores customizados no Claude usam.
 app.use('/api/mcp', mcpAuth, mcpRouter)
 
-// Demais rotas — todas exigem x-api-key.
-app.use(apiKeyAuth)
-app.use(companiesRouter)
-app.use(credentialsRouter)
-app.use(syncRouter)
-app.use(niboDataRouter)
+// Escrita/administração — só a HUB_API_KEY mestra. apiKeyAuth é passado direto
+// pra cada router (em vez de um app.use(apiKeyAuth) solto) porque um
+// middleware montado sem path se aplica a TUDO que vem depois dele na
+// cadeia — incluiria o niboDataRouter também, que precisa aceitar a
+// HUB_REPORT_KEY (ver abaixo).
+app.use(apiKeyAuth, companiesRouter)
+app.use(apiKeyAuth, credentialsRouter)
+app.use(apiKeyAuth, syncRouter)
+
+// Leitura de dados — aceita a mestra OU a HUB_REPORT_KEY (só-leitura, ver
+// middleware/apiKeyAuth.ts), pra relatórios HTML públicos não precisarem
+// embutir a chave que também abre escrita.
+app.use(dataKeyAuth, niboDataRouter)
 
 app.use(errorHandler)
 

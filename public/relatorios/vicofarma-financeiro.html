@@ -145,7 +145,9 @@
 <script>
 const API_BASE = ""; // mesma origem — hospedado em /relatorios/, sem CORS
 const COMPANY_ID = "ab6d7bb8-73da-44ae-82b6-27c16ae24c1c"; // VICOFARMA
-const HUB_API_KEY = "2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616b3a5d";
+// Chave só-leitura (não abre escrita/sync/credenciais) — feita pra ficar
+// em páginas públicas como esta. Ver src/middleware/apiKeyAuth.ts.
+const HUB_API_KEY = "fe629d8070ea1e02b8e212a620cae15e036a9675e22a3647e130d688233706ed";
 
 const MONTH_NAMES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 function fmtMonth(ym) {
