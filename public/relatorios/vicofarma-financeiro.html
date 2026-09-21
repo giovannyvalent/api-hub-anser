@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Relatório Financeiro — VICOFARMA</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
   :root {
     color-scheme: light;
@@ -89,7 +88,17 @@
   .stat-open { background: var(--warning-soft); }
   .stat-paid { background: var(--good-soft); }
 
-  .chart-wrap { position: relative; height: 260px; margin-bottom: 0.6rem; }
+  .chart-wrap { position: relative; margin-bottom: 0.6rem; }
+  .chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart-wrap svg text { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+  .chart-tip {
+    position: absolute; pointer-events: none; display: none; z-index: 2;
+    background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.5rem 0.65rem; font-size: 0.78rem; line-height: 1.45;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.14); white-space: nowrap;
+  }
+  .chart-tip b { display: block; margin-bottom: 0.15rem; }
+  .chart-tip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.35rem; }
   .legend { display: flex; gap: 1.25rem; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.9rem; }
   .legend-item { display: flex; align-items: center; gap: 0.4rem; }
   .legend-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
@@ -140,6 +149,7 @@ const HUB_API_KEY = "2a8536c4ff768bfb82cdfac0909e4e4ec7cc9caae7a7ac9829507cca616
 
 const MONTH_NAMES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
 function fmtMonth(ym) {
+  if (!/^\d{4}-\d{2}$/.test(ym)) return "s/ data";
   const [y, m] = ym.split("-");
   return `${MONTH_NAMES[Number(m) - 1]}/${y.slice(2)}`;
 }
@@ -153,7 +163,6 @@ function toggleTheme() {
   const next = current === "dark" ? "light" : "dark";
   root.setAttribute("data-theme", next);
   try { localStorage.setItem("vicofarma-theme", next); } catch (e) {}
-  redrawCharts();
 }
 (function initTheme() {
   try {
@@ -161,20 +170,6 @@ function toggleTheme() {
     if (saved) document.documentElement.setAttribute("data-theme", saved);
   } catch (e) {}
 })();
-
-function isDark() {
-  const attr = document.documentElement.getAttribute("data-theme");
-  if (attr === "dark") return true;
-  if (attr === "light") return false;
-  return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-const charts = [];
-function redrawCharts() {
-  charts.forEach((c) => c.destroy());
-  charts.length = 0;
-  renderCharts();
-}
 
 let LAST_DATA = null;
 
@@ -208,7 +203,7 @@ function section(id, title, sub, summary, openLabel, paidLabel) {
       <span class="legend-item"><span class="legend-dot" style="background:var(--warning)"></span>${openLabel}</span>
       <span class="legend-item"><span class="legend-dot" style="background:var(--good)"></span>${paidLabel}</span>
     </div>
-    <div class="chart-wrap"><canvas id="chart-${id}"></canvas></div>
+    <div class="chart-wrap" id="chart-${id}"></div>
     <button class="table-toggle" onclick="this.nextElementSibling.classList.toggle('open'); this.textContent = this.textContent.startsWith('Ver') ? 'Ocultar tabela mensal' : 'Ver tabela mensal'">Ver tabela mensal</button>
     <div class="table-wrap">
       <table>
@@ -221,42 +216,126 @@ function section(id, title, sub, summary, openLabel, paidLabel) {
   </div>`;
 }
 
-function renderCharts() {
-  if (!LAST_DATA) return;
-  const dark = isDark();
-  const gridline = dark ? "#2c2c2a" : "#e1e0d9";
-  const muted = "#898781";
-  const surface = dark ? "#1a1a19" : "#fcfcfb";
+// Gráfico de barras empilhadas em SVG puro — sem biblioteca, sem CDN, então
+// não tem como falhar por bloqueio de rede. Cores vêm de variáveis CSS, então
+// o tema claro/escuro troca sem precisar redesenhar.
+function niceStep(max, ticks) {
+  const raw = max / ticks;
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / pow;
+  const nice = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10;
+  return nice * pow;
+}
+function fmtCompact(n) {
+  if (n >= 1e6) return `R$ ${(n / 1e6).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
+  if (n >= 1e3) return `R$ ${Math.round(n / 1e3).toLocaleString("pt-BR")} mil`;
+  return `R$ ${n}`;
+}
+// Retângulo com cantos arredondados só no topo (ponta do dado); base reta.
+function topRoundedPath(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h}L${x},${y + r}Q${x},${y} ${x + r},${y}L${x + w - r},${y}Q${x + w},${y} ${x + w},${y + r}L${x + w},${y + h}Z`;
+}
+function flatPath(x, y, w, h) { return `M${x},${y}h${w}v${h}h${-w}Z`; }
 
-  [["debit", LAST_DATA.debit], ["credit", LAST_DATA.credit]].forEach(([id, summary]) => {
-    const canvas = document.getElementById(`chart-${id}`);
-    if (!canvas || typeof Chart === "undefined") return;
-    try {
-      const labels = summary.monthly.map((m) => fmtMonth(m.month));
-      const chart = new Chart(canvas.getContext("2d"), {
-        type: "bar",
-        data: {
-          labels,
-          datasets: [
-            { label: "Pago", data: summary.monthly.map((m) => m.paid), backgroundColor: "#0ca30c", stack: "s", borderColor: surface, borderWidth: 2, borderRadius: 3, maxBarThickness: 24 },
-            { label: "Em aberto", data: summary.monthly.map((m) => m.open), backgroundColor: "#fab219", stack: "s", borderColor: surface, borderWidth: 2, borderRadius: 3, maxBarThickness: 24 },
-          ],
-        },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtBRL(ctx.parsed.y)}` } } },
-          scales: {
-            x: { stacked: true, grid: { display: false }, ticks: { color: muted, font: { size: 11 } } },
-            y: { stacked: true, grid: { color: gridline }, ticks: { color: muted, font: { size: 11 }, callback: (v) => fmtBRL(v) } },
-          },
-        },
-      });
-      charts.push(chart);
-    } catch (e) {
-      canvas.parentElement.innerHTML = `<p style="color:var(--text-muted);font-size:0.85rem">Gráfico indisponível — dados na tabela abaixo.</p>`;
+function renderSvgChart(id, summary, paidLabel) {
+  const host = document.getElementById(`chart-${id}`);
+  if (!host) return;
+  const months = summary.monthly;
+  if (!months.length) {
+    host.innerHTML = `<p style="color:var(--text-muted);font-size:0.85rem">Sem lançamentos no período.</p>`;
+    return;
+  }
+
+  const W = Math.max(host.clientWidth, 320);
+  const H = 260;
+  const m = { top: 10, right: 8, bottom: 26, left: 72 };
+  const plotW = W - m.left - m.right;
+  const plotH = H - m.top - m.bottom;
+  const baseY = m.top + plotH;
+
+  const maxTotal = Math.max(...months.map((d) => d.paid + d.open), 1);
+  const step = niceStep(maxTotal, 4);
+  const yMax = Math.ceil(maxTotal / step) * step;
+  const yPos = (v) => baseY - (v / yMax) * plotH;
+
+  const band = plotW / months.length;
+  const barW = Math.min(24, band * 0.7);
+  const GAP = 2, R = 4;
+  const every = Math.max(1, Math.ceil(46 / band));
+
+  let grid = "", bars = "", hits = "", highlights = "";
+  for (let v = 0; v <= yMax + 1e-6; v += step) {
+    const yy = yPos(v);
+    grid += `<line x1="${m.left}" x2="${W - m.right}" y1="${yy}" y2="${yy}" style="stroke:${v === 0 ? "var(--baseline)" : "var(--gridline)"}" stroke-width="1"/>`;
+    grid += `<text x="${m.left - 8}" y="${yy + 4}" text-anchor="end">${fmtCompact(v)}</text>`;
+  }
+
+  months.forEach((d, i) => {
+    const cx = m.left + band * i + band / 2;
+    const x = cx - barW / 2;
+    const paidH = (d.paid / yMax) * plotH;
+    const openH = (d.open / yMax) * plotH;
+    const hasPaid = paidH >= 0.5, hasOpen = openH >= 0.5;
+
+    highlights += `<rect data-hl="${i}" x="${m.left + band * i}" y="${m.top}" width="${band}" height="${plotH}" style="fill:var(--gridline)" opacity="0"/>`;
+    if (i % every === 0) grid += `<text x="${cx}" y="${H - 8}" text-anchor="middle">${fmtMonth(d.month)}</text>`;
+
+    if (hasPaid) {
+      const p = hasOpen ? flatPath(x, baseY - paidH, barW, paidH) : topRoundedPath(x, baseY - paidH, barW, paidH, R);
+      bars += `<path d="${p}" style="fill:var(--good)"/>`;
     }
+    if (hasOpen) {
+      const h = hasPaid ? Math.max(openH - GAP, 0.5) : openH;
+      bars += `<path d="${topRoundedPath(x, baseY - paidH - openH, barW, h, R)}" style="fill:var(--warning)"/>`;
+    }
+    hits += `<rect data-i="${i}" x="${m.left + band * i}" y="${m.top}" width="${band}" height="${plotH}" fill="transparent" style="cursor:default"/>`;
+  });
+
+  host.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfico mensal de ${paidLabel.toLowerCase()} e em aberto, valores na tabela abaixo">` +
+    `${highlights}${grid}${bars}${hits}</svg><div class="chart-tip"></div>`;
+
+  const tip = host.querySelector(".chart-tip");
+  const svg = host.querySelector("svg");
+  const showTip = (e, i) => {
+    const d = months[i];
+    tip.innerHTML =
+      `<b>${fmtMonth(d.month)}</b>` +
+      `<span class="dot" style="background:var(--good)"></span>${paidLabel}: ${fmtBRL(d.paid)}<br>` +
+      `<span class="dot" style="background:var(--warning)"></span>Em aberto: ${fmtBRL(d.open)}<br>` +
+      `Total: ${fmtBRL(d.total)}`;
+    tip.style.display = "block";
+    const hostRect = host.getBoundingClientRect();
+    let left = e.clientX - hostRect.left + 14;
+    if (left + tip.offsetWidth > hostRect.width) left = e.clientX - hostRect.left - tip.offsetWidth - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = Math.max(0, e.clientY - hostRect.top - tip.offsetHeight - 10) + "px";
+    svg.querySelectorAll("[data-hl]").forEach((r) => r.setAttribute("opacity", r.dataset.hl === String(i) ? "0.45" : "0"));
+  };
+  const hideTip = () => {
+    tip.style.display = "none";
+    svg.querySelectorAll("[data-hl]").forEach((r) => r.setAttribute("opacity", "0"));
+  };
+  svg.querySelectorAll("[data-i]").forEach((r) => {
+    const i = Number(r.dataset.i);
+    r.addEventListener("pointerenter", (e) => showTip(e, i));
+    r.addEventListener("pointermove", (e) => showTip(e, i));
+    r.addEventListener("pointerleave", hideTip);
   });
 }
+
+function renderCharts() {
+  if (!LAST_DATA) return;
+  renderSvgChart("debit", LAST_DATA.debit, "Pago");
+  renderSvgChart("credit", LAST_DATA.credit, "Recebido");
+}
+
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(renderCharts, 150);
+});
 
 async function main() {
   try {
