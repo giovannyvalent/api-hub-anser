@@ -507,13 +507,23 @@ function wideDateWindow() {
 // de 10 mil lançamentos de "a pagar"). reconcileDeletes fica corretamente
 // escopado à fatia: rodar todas as fatias em sequência reconcilia a janela
 // inteira, sem risco de apagar algo que só está fora da fatia atual.
+//
+// Cursor do incremental (sync_state): tem que ser o INÍCIO da busca, nunca o
+// fim — se um lançamento for editado no Nibo enquanto a busca ainda roda
+// (minutos, num cliente grande), gravar o cursor no fim faria o incremental
+// pular essa edição. Numa fatia isolada (advanceCursor=false) ele só é
+// gravado se ainda não existir nenhum: fatias rodam em chamadas separadas,
+// então avançar o cursor a cada fatia deixaria as fatias anteriores
+// descobertas; quem avança dali em diante é o próprio incremental.
 async function syncScheduleKindRange(
   companyId: string,
   client: NiboEmpresaClient,
   kind: 'debit' | 'credit',
   from: string,
   to: string,
+  advanceCursor: boolean,
 ) {
+  const startedAt = new Date().toISOString()
   const schedules = await client.listSchedules(kind, { from, to }, 300)
   const count = await upsertSchedules(scheduleRows(companyId, schedules))
   await reconcileDeletes({
@@ -522,13 +532,16 @@ async function syncScheduleKindRange(
     currentNiboIds: schedules.map((s) => s.scheduleId),
     dateRange: { column: 'due_date', gte: from, lte: to },
   })
-  await setCursor(companyId, `schedules_${kind}`, new Date().toISOString())
+  const resource = `schedules_${kind}`
+  if (advanceCursor || (await getCursor(companyId, resource)) === null) {
+    await setCursor(companyId, resource, startedAt)
+  }
   return count
 }
 
 async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient, kind: 'debit' | 'credit') {
   const { from, to } = wideDateWindow()
-  return syncScheduleKindRange(companyId, client, kind, from, to)
+  return syncScheduleKindRange(companyId, client, kind, from, to, true)
 }
 
 async function syncStatementFull(companyId: string, client: NiboEmpresaClient) {
@@ -604,8 +617,8 @@ export async function syncCompanyNiboFullResource(
   const client = new NiboEmpresaClient(apiToken)
 
   let fn = FULL_SYNC_RESOURCES[resource]
-  if (range && resource === 'schedules_debit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'debit', range.from, range.to)
-  if (range && resource === 'schedules_credit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'credit', range.from, range.to)
+  if (range && resource === 'schedules_debit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'debit', range.from, range.to, false)
+  if (range && resource === 'schedules_credit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'credit', range.from, range.to, false)
   if (!fn) throw Object.assign(new Error(`recurso desconhecido: ${resource}`), { status: 400 })
 
   const result = await runResource(companyId, resource, 'full', () => fn(companyId, client))
