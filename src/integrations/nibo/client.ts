@@ -282,9 +282,17 @@ export class NiboEmpresaClient {
     }, this.headers(), 20)
   }
 
-  async getOrganization(): Promise<NiboOrganization | null> {
+  // IMPORTANTE (achado numa auditoria, 2026-09-22): esse endpoint NÃO é
+  // escopado pelo apitoken da empresa — ele devolve a carteira INTEIRA de
+  // clientes do escritório contábil (104 empresas no caso da Anser),
+  // sempre a mesma lista não importa qual token da empresa é usado.
+  // Confirmado: todo cliente estava gravando o mesmo item[0] ("Alves
+  // Martins Advogados") como se fosse o próprio cadastro. As outras rotas
+  // (accounts, categories, schedules, stakeholders) são corretamente
+  // escopadas por token — só essa não é.
+  async listAllOrganizations(): Promise<NiboOrganization[]> {
     const data = await fetchJson<NiboListResponse<NiboOrganization>>(`${EMPRESAS_BASE}/organizations`, this.headers())
-    return (data.items ?? [])[0] ?? null
+    return data.items ?? []
   }
 
   // kind: 'debit' = contas a pagar, 'credit' = contas a receber.

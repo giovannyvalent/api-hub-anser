@@ -286,10 +286,53 @@ async function syncStakeholders(companyId: string, client: NiboEmpresaClient, ki
   return deduped.length
 }
 
+function normalizeName(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// GET /organizations não é escopado pelo apitoken da empresa — devolve a
+// carteira INTEIRA de clientes do escritório contábil, sempre a mesma lista
+// não importa qual token é usado (achado numa auditoria, 2026-09-22: todo
+// cliente da Anser estava com o MESMO registro de outra empresa gravado
+// como se fosse o próprio, porque o código pegava sempre o item[0]).
+// Por não dar pra confiar na ordem/escopo dessa lista, a única forma segura
+// de achar "qual dessas 100+ é a minha empresa" é casar pelo nome que já
+// confiamos (o companies.name que a Anser cadastrou aqui no hub) contra o
+// nome oficial de cada uma. Se der zero ou mais de um match, não adivinha:
+// falha alto (fica visível no sync_logs) em vez de gravar algo errado.
+function findMatchingOrganization(companyName: string, candidates: { name: string }[]) {
+  const target = normalizeName(companyName)
+  const matches = candidates.filter((o) => {
+    const candidate = normalizeName(o.name)
+    return candidate.includes(target) || target.includes(candidate)
+  })
+  if (matches.length !== 1) {
+    throw new Error(
+      `organization ambígua pro nome "${companyName}": ${matches.length} match(es) em ${candidates.length} organizações ` +
+        `(${matches.map((m) => `"${m.name}"`).join(', ') || 'nenhum'})`,
+    )
+  }
+  return matches[0]
+}
+
 async function syncOrganization(companyId: string, client: NiboEmpresaClient) {
   const supabase = getSupabase()
-  const org = await client.getOrganization()
-  if (!org) return 0
+  const { data: company, error: companyError } = await supabase
+    .from('companies')
+    .select('name')
+    .eq('id', companyId)
+    .single()
+  if (companyError) throw new Error(companyError.message)
+
+  const candidates = await client.listAllOrganizations()
+  const org = findMatchingOrganization((company as any).name, candidates) as any
+
   const { error } = await supabase.from('nibo_organization').upsert(
     {
       company_id: companyId,
