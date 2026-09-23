@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitor de Sincronização</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+    --good:           #0ca30c;
+    --good-soft:      #e5f6e5;
+    --critical:       #d03b3b;
+    --critical-soft:  #fbe7e7;
+    --blue:           #2a78d6;
+    --blue-soft:      #e8f0fb;
+    --row-hl:         #fff8e1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --border:         rgba(255,255,255,0.10);
+      --good-soft:      #123312;
+      --critical-soft:  #3a1414;
+      --blue:           #3987e5;
+      --blue-soft:      #14243a;
+      --row-hl:         #2a2410;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --border:         rgba(255,255,255,0.10);
+    --good-soft:      #123312;
+    --critical-soft:  #3a1414;
+    --blue:           #3987e5;
+    --blue-soft:      #14243a;
+    --row-hl:         #2a2410;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5; padding: 1.75rem 1rem 4rem;
+  }
+  .container { max-width: 1050px; margin: 0 auto; }
+
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  header h1 { font-size: 1.4rem; margin: 0 0 0.2rem 0; }
+  header p { color: var(--text-secondary); margin: 0; font-size: 0.85rem; }
+  .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--good); margin-right: 0.4rem; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  #theme-toggle {
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary);
+    border-radius: 8px; padding: 0.4rem 0.7rem; font-size: 0.8rem; cursor: pointer;
+  }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.9rem; margin-bottom: 1.5rem; }
+  .stat { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; }
+  .stat .label { font-size: 0.76rem; color: var(--text-secondary); margin-bottom: 0.25rem; }
+  .stat .value { font-size: 1.4rem; font-weight: 600; }
+
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 1.3rem 1.4rem; margin-bottom: 1.5rem; }
+  .card h2 { margin: 0 0 1rem 0; font-size: 1.02rem; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--gridline); }
+  th { color: var(--text-muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.02em; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.company-active { background: var(--row-hl); }
+
+  .badge { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; }
+  .badge-good { background: var(--good-soft); color: var(--good); }
+  .badge-error { background: var(--critical-soft); color: var(--critical); }
+  .badge-idle { background: var(--gridline); color: var(--text-muted); }
+
+  #feed { max-height: 420px; overflow-y: auto; }
+  .feed-row { display: flex; align-items: center; gap: 0.7rem; padding: 0.5rem 0; border-bottom: 1px solid var(--gridline); font-size: 0.83rem; }
+  .feed-row:last-child { border-bottom: none; }
+  .feed-row.fresh { animation: fadein 0.6s ease; }
+  @keyframes fadein { from { background: var(--row-hl); } to { background: transparent; } }
+  .feed-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .feed-dot.ok { background: var(--good); }
+  .feed-dot.err { background: var(--critical); }
+  .feed-company { font-weight: 600; min-width: 140px; }
+  .feed-resource { color: var(--text-secondary); flex: 1; }
+  .feed-count { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .feed-time { color: var(--text-muted); font-size: 0.76rem; white-space: nowrap; min-width: 70px; text-align: right; }
+  .feed-err-msg { color: var(--critical); font-size: 0.76rem; margin-left: 1.5rem; margin-top: -0.3rem; margin-bottom: 0.3rem; }
+
+  .state { text-align: center; padding: 3rem 1rem; color: var(--text-secondary); }
+  .state.error { color: var(--critical); }
+  footer { text-align: center; color: var(--text-muted); font-size: 0.78rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div>
+      <h1><span class="live-dot"></span>Monitor de Sincronização</h1>
+      <p>Anser Data Hub — atualiza sozinho a cada 6s</p>
+    </div>
+    <button id="theme-toggle" onclick="toggleTheme()">Alternar tema</button>
+  </header>
+
+  <div id="loading" class="state">Carregando...</div>
+  <div id="error" class="state error" style="display:none"></div>
+  <div id="content" style="display:none">
+    <div class="stats-grid" id="stats"></div>
+
+    <div class="card">
+      <h2>Empresas</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Empresa</th><th>Último full sync</th><th>Último incremental</th><th>Status</th></tr></thead>
+          <tbody id="companies-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Atividade recente</h2>
+      <div id="feed"></div>
+    </div>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const HUB_KEY = "fe629d8070ea1e02b8e212a620cae15e036a9675e22a3647e130d688233706ed"; // read-only
+const POLL_MS = 6000;
+const FEED_LIMIT = 300;
+
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  root.setAttribute("data-theme", next);
+  try { localStorage.setItem("monitor-theme", next); } catch (e) {}
+}
+(function initTheme() {
+  try {
+    const saved = localStorage.getItem("monitor-theme");
+    if (saved) document.documentElement.setAttribute("data-theme", saved);
+  } catch (e) {}
+})();
+
+async function api(path) {
+  const res = await fetch(path, { headers: { "x-api-key": HUB_KEY } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} em ${path}`);
+  return (await res.json()).data;
+}
+
+function timeAgo(iso) {
+  const secs = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  if (secs < 5) return "agora";
+  if (secs < 60) return `${secs}s atrás`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}min atrás`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h atrás`;
+  return `${Math.floor(hrs / 24)}d atrás`;
+}
+
+let companyNames = {};
+let seenLogIds = null; // null = ainda não fez a 1a renderização (nada é "novo" nela)
+
+async function loadCompanies() {
+  const companies = await api("/api/companies?active=true");
+  companyNames = Object.fromEntries(companies.map((c) => [c.id, c.name]));
+  return companies;
+}
+
+function renderStats(logs) {
+  const now = Date.now();
+  const last24h = logs.filter((l) => now - new Date(l.finished_at).getTime() < 24 * 3600 * 1000);
+  const errors24h = last24h.filter((l) => l.status === "error");
+  const recordsToday = last24h.reduce((sum, l) => sum + (l.records_synced || 0), 0);
+  const activeNow = new Set(
+    logs.filter((l) => now - new Date(l.finished_at).getTime() < 120 * 1000).map((l) => l.company_id),
+  ).size;
+
+  const stats = [
+    { label: "Empresas ativas", value: Object.keys(companyNames).length },
+    { label: "Sincronizando agora", value: activeNow },
+    { label: `Syncs (últimos ${last24h.length < logs.length ? "" : "~"}24h)`, value: last24h.length },
+    { label: "Erros (24h)", value: errors24h.length },
+    { label: "Registros processados (24h)", value: recordsToday.toLocaleString("pt-BR") },
+  ];
+  document.getElementById("stats").innerHTML = stats
+    .map((s) => `<div class="stat"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
+    .join("");
+}
+
+function renderCompanies(logs) {
+  const rows = Object.entries(companyNames).map(([id, name]) => {
+    const companyLogs = logs.filter((l) => l.company_id === id);
+    const lastFull = companyLogs.find((l) => l.mode === "full");
+    const lastIncr = companyLogs.find((l) => l.mode === "incremental");
+    const mostRecent = companyLogs[0];
+    const isActive = mostRecent && Date.now() - new Date(mostRecent.finished_at).getTime() < 120 * 1000;
+    const hasRecentError = companyLogs.slice(0, 15).some((l) => l.status === "error");
+
+    const badge = isActive
+      ? `<span class="badge badge-good">● sincronizando</span>`
+      : hasRecentError
+        ? `<span class="badge badge-error">⚠ erro recente</span>`
+        : mostRecent
+          ? `<span class="badge badge-good">✓ ok</span>`
+          : `<span class="badge badge-idle">sem dados</span>`;
+
+    return `<tr class="${isActive ? "company-active" : ""}">
+      <td>${name}</td>
+      <td>${lastFull ? timeAgo(lastFull.finished_at) : "—"}</td>
+      <td>${lastIncr ? timeAgo(lastIncr.finished_at) : "—"}</td>
+      <td>${badge}</td>
+    </tr>`;
+  });
+  document.getElementById("companies-body").innerHTML = rows.join("");
+}
+
+function renderFeed(logs) {
+  const top = logs.slice(0, 40);
+  const isFirstRender = seenLogIds === null;
+  const seenBefore = seenLogIds ?? new Set();
+
+  document.getElementById("feed").innerHTML = top
+    .map((l) => {
+      const isFresh = !isFirstRender && !seenBefore.has(l.id);
+      const ok = l.status === "success";
+      const row = `<div class="feed-row ${isFresh ? "fresh" : ""}">
+        <span class="feed-dot ${ok ? "ok" : "err"}"></span>
+        <span class="feed-company">${companyNames[l.company_id] || l.company_id || "—"}</span>
+        <span class="feed-resource">${l.resource} <span style="opacity:.6">(${l.mode})</span></span>
+        <span class="feed-count">${ok ? (l.records_synced ?? 0).toLocaleString("pt-BR") + " reg." : "falhou"}</span>
+        <span class="feed-time">${timeAgo(l.finished_at)}</span>
+      </div>`;
+      const err = !ok && l.error_message ? `<div class="feed-err-msg">${l.error_message}</div>` : "";
+      return row + err;
+    })
+    .join("");
+
+  // Guarda só os ids da janela atual (não a lista inteira acumulada) — uma
+  // execução que sair da janela de 40 e voltar (não deveria acontecer, mas
+  // por segurança) é tratada como nova de novo, o que é o comportamento certo.
+  seenLogIds = new Set(top.map((l) => l.id));
+}
+
+async function tick() {
+  try {
+    const logs = await api(`/api/data/nibo/sync-logs?limit=${FEED_LIMIT}`);
+    renderStats(logs);
+    renderCompanies(logs);
+    renderFeed(logs);
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("content").style.display = "block";
+    document.getElementById("footer").textContent = `Última atualização: ${new Date().toLocaleTimeString("pt-BR")}`;
+  } catch (err) {
+    document.getElementById("loading").style.display = "none";
+    const errEl = document.getElementById("error");
+    errEl.style.display = "block";
+    errEl.textContent = `Não foi possível carregar: ${err.message}`;
+  }
+}
+
+async function main() {
+  try {
+    await loadCompanies();
+  } catch (err) {
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("error").style.display = "block";
+    document.getElementById("error").textContent = `Não foi possível carregar empresas: ${err.message}`;
+    return;
+  }
+  await tick();
+  setInterval(async () => {
+    try { await loadCompanies(); } catch (e) {}
+    tick();
+  }, POLL_MS);
+}
+main();
+</script>
+</body>
+</html>
