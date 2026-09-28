@@ -73,6 +73,7 @@
   }
   .company-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .company-chip .dot.active { background: var(--good); box-shadow: 0 0 6px var(--good-glow); animation: pulse 1.2s ease-in-out infinite; }
+  .company-chip .dot.done { background: var(--good); }
   .company-chip .dot.idle { background: var(--text-muted); }
   .company-chip .dot.error { background: var(--critical); box-shadow: 0 0 6px var(--critical); }
   .company-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -160,7 +161,7 @@
 <script>
 const HUB_KEY = "fe629d8070ea1e02b8e212a620cae15e036a9675e22a3647e130d688233706ed"; // read-only
 const POLL_MS = 4000;
-const FEED_LIMIT = 300;
+const FEED_LIMIT = 1000; // maximo aceito pela API — evita empresa sumir do radar em picos de atividade
 const SPARK_HISTORY = 24;
 
 async function api(path) {
@@ -246,11 +247,16 @@ function renderCompanyGrid(logs) {
   const rows = Object.entries(companyNames).map(([id, name]) => {
     const companyLogs = logs.filter((l) => l.company_id === id);
     const mostRecent = companyLogs[0];
+    // verde pulsando = sincronizando agora; verde solido = atualizada
+    // recentemente (dentro da janela do cron incremental, ~15min, com
+    // folga); cinza = sem atividade recente; vermelho = erro recente.
     let dotClass = "idle";
     if (mostRecent) {
       const age = now - new Date(mostRecent.finished_at).getTime();
-      if (companyLogs.slice(0, 8).some((l) => l.status === "error")) dotClass = "error";
-      else if (age < 20000) dotClass = "active";
+      const hasRecentError = companyLogs.slice(0, 8).some((l) => l.status === "error");
+      if (hasRecentError) dotClass = "error";
+      else if (age < 15000) dotClass = "active";
+      else if (age < 20 * 60 * 1000) dotClass = "done";
     }
     return `<div class="company-chip"><span class="dot ${dotClass}"></span><span class="name" title="${name}">${name}</span></div>`;
   });
