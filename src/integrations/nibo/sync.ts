@@ -312,6 +312,15 @@ function findMatchingOrganization(companyName: string, candidates: { name: strin
     const candidate = normalizeName(o.name)
     return candidate.includes(target) || target.includes(candidate)
   })
+  // Duas empresas reais podem ter nomes parecidos (ex: "BR Barbearia" e
+  // "BR Barbearia Franqueadora Eireli" — uma é a franquia, outra uma
+  // unidade/matriz). Se o match por substring der mais de um, prefere o
+  // EXATO (normalizado) antes de desistir — resolve isso sozinho na
+  // maioria dos casos, sem precisar de intervenção manual.
+  if (matches.length > 1) {
+    const exact = matches.filter((o) => normalizeName(o.name) === target)
+    if (exact.length === 1) return exact[0]
+  }
   if (matches.length !== 1) {
     throw new Error(
       `organization ambígua pro nome "${companyName}": ${matches.length} match(es) em ${candidates.length} organizações ` +
