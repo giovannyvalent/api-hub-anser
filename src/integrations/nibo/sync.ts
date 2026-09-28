@@ -587,7 +587,14 @@ async function syncScheduleKindFull(companyId: string, client: NiboEmpresaClient
   return syncScheduleKindRange(companyId, client, kind, from, to, true)
 }
 
-async function syncStatementFull(companyId: string, client: NiboEmpresaClient) {
+// overrideRange (opcional) permite fatiar a janela ampla em pedaços
+// menores, igual já é feito pra schedules_debit/credit — necessário pra
+// clientes grandes o suficiente pra estourar os 300s da função mesmo com
+// esse recurso isolado (ex: NARAS PADARIA, dezenas de milhares de
+// lançamentos de schedules — o extrato dela tem volume parecido). Cada
+// conta continua respeitando sua própria janela efetiva (dateOfOpenBalance
+// etc.), só recortada pela fatia pedida.
+async function syncStatementFull(companyId: string, client: NiboEmpresaClient, overrideRange?: { from: string; to: string }) {
   const { now, from: standardFrom, to } = wideDateWindow()
   // Inclui contas arquivadas também — o extrato histórico delas continua
   // sendo dado real e útil (auditoria, conferência de saldo de abertura etc.).
@@ -601,13 +608,20 @@ async function syncStatementFull(companyId: string, client: NiboEmpresaClient) {
   const wideFrom = new Date(now)
   wideFrom.setFullYear(wideFrom.getFullYear() - 10)
   const fmt = (d: Date) => d.toISOString().split('T')[0]
-  const accountRanges = niboAccounts.map((a) => {
-    const openDate = a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : null
-    let effectiveFrom = standardFrom
-    if (openDate && openDate < standardFrom) effectiveFrom = openDate
-    else if (a.isArchived && !openDate) effectiveFrom = fmt(wideFrom)
-    return { id: a.id, from: effectiveFrom, to }
-  })
+  const accountRanges = niboAccounts
+    .map((a) => {
+      const openDate = a.dateOfOpenBalance ? a.dateOfOpenBalance.split('T')[0] : null
+      let effectiveFrom = standardFrom
+      if (openDate && openDate < standardFrom) effectiveFrom = openDate
+      else if (a.isArchived && !openDate) effectiveFrom = fmt(wideFrom)
+      let effectiveTo = to
+      if (overrideRange) {
+        effectiveFrom = effectiveFrom > overrideRange.from ? effectiveFrom : overrideRange.from
+        effectiveTo = effectiveTo < overrideRange.to ? effectiveTo : overrideRange.to
+      }
+      return { id: a.id, from: effectiveFrom, to: effectiveTo }
+    })
+    .filter((r) => r.from <= r.to)
   return syncStatementForAccounts(companyId, client, accountRanges)
 }
 
@@ -662,6 +676,7 @@ export async function syncCompanyNiboFullResource(
   let fn = FULL_SYNC_RESOURCES[resource]
   if (range && resource === 'schedules_debit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'debit', range.from, range.to, false)
   if (range && resource === 'schedules_credit') fn = (cid, c) => syncScheduleKindRange(cid, c, 'credit', range.from, range.to, false)
+  if (range && resource === 'statement') fn = (cid, c) => syncStatementFull(cid, c, range)
   if (!fn) throw Object.assign(new Error(`recurso desconhecido: ${resource}`), { status: 400 })
 
   const result = await runResource(companyId, resource, 'full', () => fn(companyId, client))
