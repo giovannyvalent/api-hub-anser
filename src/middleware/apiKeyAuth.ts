@@ -17,10 +17,16 @@ import { env } from '../config/env.js'
 // ficam publicamente acessíveis sem login e por isso nunca podem embutir a
 // chave mestra (que também abre escrita: criar/apagar empresa, trocar
 // credencial, disparar sync). Todo o resto exige só a mestra.
+//
+// GET /api/companies é a única exceção fora de /api/data/: os relatórios e
+// o cockpit de monitoramento precisam da lista de empresas (id -> nome) só
+// pra exibição, e essa rota não devolve nada sensível (sem credenciais/
+// token). POST/PATCH/DELETE em /api/companies continuam exigindo a mestra
+// — a checagem de método garante isso.
 export function hubAuth(req: Request, res: Response, next: NextFunction) {
   const provided = req.header('x-api-key')
-  const isDataRoute = req.path.startsWith('/api/data/')
-  const validKeys = isDataRoute ? [env.hubApiKey, env.hubReportKey].filter(Boolean) : [env.hubApiKey]
+  const isReadOnlyRoute = req.path.startsWith('/api/data/') || (req.method === 'GET' && req.path === '/api/companies')
+  const validKeys = isReadOnlyRoute ? [env.hubApiKey, env.hubReportKey].filter(Boolean) : [env.hubApiKey]
   if (!provided || !validKeys.includes(provided)) {
     return res.status(401).json({ error: 'Unauthorized: missing or invalid x-api-key' })
   }
