@@ -57,14 +57,35 @@
   }
   .panel h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 0 0 0.8rem 0; }
 
-  .track-position { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-  .led { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
-  .led.on { background: var(--good); box-shadow: 0 0 10px var(--good-glow); animation: pulse 1.4s ease-in-out infinite; }
-  .led.off { background: var(--track); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-  .track-position .company { font-size: 1.15rem; font-weight: 700; }
-  .track-position .resource { color: var(--text-secondary); font-size: 0.9rem; }
-  .track-position .ago { color: var(--text-muted); font-size: 0.8rem; margin-left: auto; }
+
+  .status-banner { display: flex; gap: 0.7rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .status-pill {
+    flex: 1; min-width: 150px; display: flex; align-items: center; gap: 0.6rem;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 1rem;
+  }
+  .status-pill .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .status-pill .dot.importing { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse 1.2s ease-in-out infinite; }
+  .status-pill .dot.done { background: var(--good); }
+  .status-pill .dot.error { background: var(--critical); box-shadow: 0 0 8px var(--critical); }
+  .status-pill .dot.idle { background: var(--text-muted); }
+  .status-pill .n { font-size: 1.5rem; font-weight: 700; }
+  .status-pill .l { font-size: 0.75rem; color: var(--text-secondary); }
+
+  .importing-list { display: flex; flex-direction: column; gap: 0.5rem; }
+  .importing-row {
+    display: flex; align-items: center; gap: 0.8rem; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.9rem; flex-wrap: wrap;
+  }
+  .importing-row .led { width: 10px; height: 10px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue); animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+  .importing-row .company { font-weight: 700; min-width: 160px; }
+  .importing-row .resource { color: var(--text-secondary); font-size: 0.88rem; flex: 1; }
+  .importing-row .ago { color: var(--text-muted); font-size: 0.8rem; }
+  .empty-msg { color: var(--text-muted); font-size: 0.88rem; padding: 0.4rem 0; }
+
+  .grid-legend { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 0.8rem; font-size: 0.78rem; color: var(--text-secondary); }
+  .grid-legend .item { display: flex; align-items: center; gap: 0.4rem; }
+  .grid-legend .dot { width: 8px; height: 8px; border-radius: 50%; }
 
   .grid-companies { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem; }
   .company-chip {
@@ -72,7 +93,7 @@
     border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.7rem; font-size: 0.82rem;
   }
   .company-chip .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .company-chip .dot.active { background: var(--good); box-shadow: 0 0 6px var(--good-glow); animation: pulse 1.2s ease-in-out infinite; }
+  .company-chip .dot.importing { background: var(--blue); box-shadow: 0 0 6px var(--blue); animation: pulse 1.2s ease-in-out infinite; }
   .company-chip .dot.done { background: var(--good); }
   .company-chip .dot.idle { background: var(--text-muted); }
   .company-chip .dot.error { background: var(--critical); box-shadow: 0 0 6px var(--critical); }
@@ -134,18 +155,21 @@
       </div>
     </div>
 
+    <div class="status-banner" id="status-banner"></div>
+
     <div class="panel">
-      <h2>Fila — processando agora</h2>
-      <div class="track-position">
-        <span class="led" id="tp-led"></span>
-        <span class="company" id="tp-company">—</span>
-        <span class="resource" id="tp-resource">—</span>
-        <span class="ago num" id="tp-ago">—</span>
-      </div>
+      <h2>Importando agora (full sync em andamento)</h2>
+      <div class="importing-list" id="importing-list"></div>
     </div>
 
     <div class="panel">
       <h2>Fila — status por empresa</h2>
+      <div class="grid-legend">
+        <span class="item"><span class="dot" style="background:var(--blue)"></span>importando agora</span>
+        <span class="item"><span class="dot" style="background:var(--good)"></span>em dia</span>
+        <span class="item"><span class="dot" style="background:var(--critical)"></span>erro recente</span>
+        <span class="item"><span class="dot" style="background:var(--text-muted)"></span>sem atividade recente</span>
+      </div>
       <div class="grid-companies" id="companies-grid"></div>
     </div>
 
@@ -232,32 +256,69 @@ function renderGauges(logs, throughput) {
   errBar.style.background = errors.length === 0 ? "var(--good)" : "var(--critical)";
 }
 
-function renderTrackPosition(logs) {
-  const latest = logs[0];
-  if (!latest) return;
-  const active = Date.now() - new Date(latest.finished_at).getTime() < 15000;
-  document.getElementById("tp-led").className = `led ${active ? "on" : "off"}`;
-  document.getElementById("tp-company").textContent = companyNames[latest.company_id] || latest.company_id || "—";
-  document.getElementById("tp-resource").textContent = `${latest.resource} (${latest.mode}) — ${latest.status === "success" ? (latest.records_synced ?? 0).toLocaleString("pt-BR") + " registros" : "ERRO"}`;
-  document.getElementById("tp-ago").textContent = timeAgo(latest.finished_at);
-}
-
-function renderCompanyGrid(logs) {
+// Classificação única por empresa, usada no banner, na lista "importando
+// agora" e no grid — pra nunca ficar duas partes do cockpit contando coisas
+// diferentes. Categorias:
+//  - error: teve erro entre as ultimas 8 execuções e ainda não teve sucesso
+//    depois dele nesse mesmo recurso.
+//  - importing: teve full sync (onboarding) nos últimos 3min — não é só
+//    "tocou agora", é especificamente "está sendo importada de verdade".
+//  - done: teve QUALQUER sync com sucesso dentro da janela do cron
+//    incremental (~20min, com folga) — já está em dia.
+//  - idle: nunca sincronizou, ou faz mais de 20min que não sincroniza.
+function classifyCompanies(logs) {
   const now = Date.now();
-  const rows = Object.entries(companyNames).map(([id, name]) => {
+  const result = {};
+  for (const id of Object.keys(companyNames)) {
     const companyLogs = logs.filter((l) => l.company_id === id);
     const mostRecent = companyLogs[0];
-    // verde pulsando = sincronizando agora; verde solido = atualizada
-    // recentemente (dentro da janela do cron incremental, ~15min, com
-    // folga); cinza = sem atividade recente; vermelho = erro recente.
-    let dotClass = "idle";
-    if (mostRecent) {
-      const age = now - new Date(mostRecent.finished_at).getTime();
-      const hasRecentError = companyLogs.slice(0, 8).some((l) => l.status === "error");
-      if (hasRecentError) dotClass = "error";
-      else if (age < 15000) dotClass = "active";
-      else if (age < 20 * 60 * 1000) dotClass = "done";
-    }
+    const hasRecentError = companyLogs.slice(0, 8).some((l) => l.status === "error");
+    const importingLog = companyLogs.find((l) => l.mode === "full" && now - new Date(l.finished_at).getTime() < 3 * 60 * 1000);
+
+    let category = "idle";
+    if (hasRecentError) category = "error";
+    else if (importingLog) category = "importing";
+    else if (mostRecent && now - new Date(mostRecent.finished_at).getTime() < 20 * 60 * 1000) category = "done";
+
+    result[id] = { category, mostRecent, importingLog };
+  }
+  return result;
+}
+
+function renderStatusBanner(classification) {
+  const counts = { importing: 0, done: 0, error: 0, idle: 0 };
+  for (const c of Object.values(classification)) counts[c.category]++;
+  const pills = [
+    ["importing", "Importando agora", counts.importing],
+    ["done", "Em dia", counts.done],
+    ["error", "Com erro", counts.error],
+    ["idle", "Sem atividade recente", counts.idle],
+  ];
+  document.getElementById("status-banner").innerHTML = pills
+    .map(([cls, label, n]) => `<div class="status-pill"><span class="dot ${cls}"></span><div><div class="n num">${n}</div><div class="l">${label}</div></div></div>`)
+    .join("");
+}
+
+function renderImportingList(classification) {
+  const rows = Object.entries(classification)
+    .filter(([, c]) => c.category === "importing")
+    .map(([id, c]) => {
+      const l = c.importingLog;
+      const status = l.status === "success" ? `${(l.records_synced ?? 0).toLocaleString("pt-BR")} registros` : "ERRO";
+      return `<div class="importing-row">
+        <span class="led"></span>
+        <span class="company">${companyNames[id]}</span>
+        <span class="resource">${l.resource} — ${status}</span>
+        <span class="ago num">${timeAgo(l.finished_at)}</span>
+      </div>`;
+    });
+  document.getElementById("importing-list").innerHTML =
+    rows.length > 0 ? rows.join("") : `<div class="empty-msg">Nenhuma importação em andamento agora — só sync incremental de rotina.</div>`;
+}
+
+function renderCompanyGrid(classification) {
+  const rows = Object.entries(companyNames).map(([id, name]) => {
+    const dotClass = classification[id]?.category ?? "idle";
     return `<div class="company-chip"><span class="dot ${dotClass}"></span><span class="name" title="${name}">${name}</span></div>`;
   });
   document.getElementById("companies-grid").innerHTML = rows.join("");
@@ -296,9 +357,12 @@ async function tick() {
     }
     lastPollAt = now;
 
+    const classification = classifyCompanies(logs);
+
     renderGauges(logs, throughput);
-    renderTrackPosition(logs);
-    renderCompanyGrid(logs);
+    renderStatusBanner(classification);
+    renderImportingList(classification);
+    renderCompanyGrid(classification);
     renderLog(logs);
 
     document.getElementById("loading").style.display = "none";
