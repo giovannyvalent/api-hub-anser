@@ -884,3 +884,51 @@ export async function syncAllCompaniesNiboIncremental(): Promise<SyncReport[]> {
   }
   return reports
 }
+
+// ============================================================================
+// Rotina de exclusões — detecta e remove schedules apagados no Nibo.
+//
+// O sync incremental (rodado a cada ~15min) NUNCA detecta exclusão: ele só
+// pergunta "o que mudou desde X" (updateDate ge cursor), e um registro
+// apagado simplesmente some da resposta, sem nenhum aviso. Só o full sync
+// detecta isso, porque busca a lista INTEIRA de novo e compara com o que já
+// está no banco (reconcileDeletes). Mas full sync de todas as empresas é
+// pesado demais pra cron de alta frequência — por isso existe essa rotina
+// separada, focada só no que mais importa financeiramente (schedules_debit
+// e schedules_credit, "a pagar"/"a receber"), sem cadastros nem extrato.
+//
+// Achado em produção (2026-10-xx): um empréstimo de R$32.185,27 excluído no
+// Nibo ficou "fantasma" no hub porque só o incremental rodava com
+// frequência pra essa empresa — o full sync (que pegaria essa exclusão)
+// não tinha rodado desde o onboarding dela.
+// ============================================================================
+const DELETIONS_TIME_BUDGET_MS = 260_000
+
+export async function syncAllCompaniesNiboScheduleDeletions(): Promise<SyncReport[]> {
+  const credentials = await activeNiboCredentials()
+
+  // Rotação própria (período maior que a do incremental) — cada execução
+  // cobre o quanto couber no orçamento de tempo; ao longo de várias
+  // execuções, toda empresa eventualmente é a primeira da fila.
+  const rotationPeriodMs = 30 * 60 * 1000
+  const offset = credentials.length > 0 ? Math.floor(Date.now() / rotationPeriodMs) % credentials.length : 0
+  const ordered = [...credentials.slice(offset), ...credentials.slice(0, offset)]
+
+  const startedAt = Date.now()
+  const reports: SyncReport[] = []
+  for (const { companyId, apiToken } of ordered) {
+    if (Date.now() - startedAt > DELETIONS_TIME_BUDGET_MS) {
+      logger.warn(
+        `syncAllCompaniesNiboScheduleDeletions: orçamento de tempo esgotado, ${ordered.length - reports.length} empresa(s) ficaram pra próxima chamada`,
+      )
+      break
+    }
+    const client = new NiboEmpresaClient(apiToken)
+    const results: SyncResourceResult[] = []
+    results.push(await runResource(companyId, 'schedules_debit', 'full', () => syncScheduleKindFull(companyId, client, 'debit')))
+    results.push(await runResource(companyId, 'schedules_credit', 'full', () => syncScheduleKindFull(companyId, client, 'credit')))
+    reports.push({ platform: 'nibo', companyId, results, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() })
+    await sleep(INTER_COMPANY_DELAY_MS)
+  }
+  return reports
+}

@@ -5,6 +5,7 @@ import {
   FULL_SYNC_RESOURCE_NAMES,
   syncAllCompaniesNiboFull,
   syncAllCompaniesNiboIncremental,
+  syncAllCompaniesNiboScheduleDeletions,
   syncCompanyNiboFull,
   syncCompanyNiboFullResource,
   syncCompanyNiboIncremental,
@@ -91,6 +92,17 @@ syncRouter.post(
   '/api/sync/nibo/incremental',
   asyncHandler(async (_req, res) => {
     const reports = await syncAllCompaniesNiboIncremental()
+    res.json({ data: reports })
+  }),
+)
+
+// POST /api/sync/nibo/deletions — rotina de exclusões: reconcilia
+// schedules_debit/credit (sem cadastros, sem extrato) pra um grupo de
+// empresas por vez, rotacionando. Ver syncAllCompaniesNiboScheduleDeletions.
+syncRouter.post(
+  '/api/sync/nibo/deletions',
+  asyncHandler(async (_req, res) => {
+    const reports = await syncAllCompaniesNiboScheduleDeletions()
     res.json({ data: reports })
   }),
 )
