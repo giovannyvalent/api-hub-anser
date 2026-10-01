@@ -75,7 +75,11 @@ async function reconcileDeletes(params: {
   const SELECT_PAGE_SIZE = 1000
   let from = 0
   while (true) {
-    let query = supabase.from(params.table).select(col).range(from, from + SELECT_PAGE_SIZE - 1)
+    // .order() é obrigatório aqui: sem ordenação explícita, o Postgres não
+    // garante que duas páginas de .range() em sequência cubram a tabela
+    // sem buraco nem repetição (mesma classe de bug já visto do lado da
+    // paginação do Nibo — a correção é a mesma, sempre ordenar).
+    let query = supabase.from(params.table).select(col).order(col, { ascending: true }).range(from, from + SELECT_PAGE_SIZE - 1)
     for (const [k, v] of Object.entries(params.match)) query = query.eq(k, v)
     if (params.dateRange) {
       query = query.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
