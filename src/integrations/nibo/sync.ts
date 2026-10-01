@@ -62,17 +62,34 @@ async function reconcileDeletes(params: {
   const supabase = getSupabase()
   const col = params.niboIdColumn ?? 'nibo_id'
 
-  let query = supabase.from(params.table).select(col)
-  for (const [k, v] of Object.entries(params.match)) query = query.eq(k, v)
-  if (params.dateRange) {
-    query = query.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+  // IMPORTANTE (achado em produção, 2026-10-xx): essa consulta SEM .range()
+  // ficava sujeita ao limite padrão do PostgREST (1000 linhas) — pra
+  // qualquer escopo (empresa+recurso+janela) com mais de 1000 linhas já
+  // existentes no banco, a comparação só enxergava a primeira página,
+  // deixando exclusões na sobra INVISÍVEIS pra sempre (o registro nunca
+  // some do hub, porque nunca entra na lista de candidatos a apagar). Com
+  // clientes grandes tendo dezenas de milhares de schedules/statement,
+  // isso provavelmente mascarou exclusões não detectadas na base inteira.
+  // Pagina explicitamente até esgotar, igual já é feito noutros pontos.
+  const existingIds: string[] = []
+  const SELECT_PAGE_SIZE = 1000
+  let from = 0
+  while (true) {
+    let query = supabase.from(params.table).select(col).range(from, from + SELECT_PAGE_SIZE - 1)
+    for (const [k, v] of Object.entries(params.match)) query = query.eq(k, v)
+    if (params.dateRange) {
+      query = query.gte(params.dateRange.column, params.dateRange.gte).lte(params.dateRange.column, params.dateRange.lte)
+    }
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    const rows = data ?? []
+    for (const r of rows) existingIds.push((r as any)[col])
+    if (rows.length < SELECT_PAGE_SIZE) break
+    from += SELECT_PAGE_SIZE
   }
 
-  const { data, error } = await query
-  if (error) throw new Error(error.message)
-
   const currentSet = new Set(params.currentNiboIds)
-  const toDelete = (data ?? []).map((r: any) => r[col]).filter((id: string) => !currentSet.has(id))
+  const toDelete = existingIds.filter((id) => !currentSet.has(id))
   if (toDelete.length === 0) return 0
 
   // Deleta em lotes: um .in(col, ids) com muitos ids vira uma URL enorme
