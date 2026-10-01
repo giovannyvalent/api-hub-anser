@@ -825,18 +825,60 @@ const INTER_COMPANY_DELAY_MS = 250
 
 export async function syncAllCompaniesNiboFull(): Promise<SyncReport[]> {
   const credentials = await activeNiboCredentials()
+
+  // Mesma rotação do incremental (ver syncAllCompaniesNiboIncremental) —
+  // full sync de todo mundo já é sabidamente mais lento que 300s com a
+  // base atual de clientes, então sem rotacionar as últimas empresas da
+  // lista nunca chegam a ser reconciliadas pelo cron diário.
+  const rotationPeriodMs = 24 * 60 * 60 * 1000 // cron diário
+  const offset = credentials.length > 0 ? Math.floor(Date.now() / rotationPeriodMs) % credentials.length : 0
+  const ordered = [...credentials.slice(offset), ...credentials.slice(0, offset)]
+
+  const startedAt = Date.now()
   const reports: SyncReport[] = []
-  for (const { companyId, apiToken } of credentials) {
+  for (const { companyId, apiToken } of ordered) {
+    if (Date.now() - startedAt > INCREMENTAL_TIME_BUDGET_MS) {
+      logger.warn(
+        `syncAllCompaniesNiboFull: orçamento de tempo esgotado, ${ordered.length - reports.length} empresa(s) ficaram pra próxima chamada`,
+      )
+      break
+    }
     reports.push(await syncCompanyNiboFull(companyId, apiToken))
     await sleep(INTER_COMPANY_DELAY_MS)
   }
   return reports
 }
 
+// Margem de segurança antes do limite de 300s da função serverless — para
+// de começar empresa nova a partir daqui, em vez de deixar a função ser
+// morta no meio (FUNCTION_INVOCATION_TIMEOUT), o que cortaria o upsert de
+// alguma empresa pela metade sem registrar nada no sync_logs.
+const INCREMENTAL_TIME_BUDGET_MS = 260_000
+
 export async function syncAllCompaniesNiboIncremental(): Promise<SyncReport[]> {
   const credentials = await activeNiboCredentials()
+
+  // Rotaciona a ordem com base no horário (não sempre a mesma lista) — com
+  // o número de empresas crescendo, uma chamada só pode não dar tempo de
+  // processar todas antes do limite de 300s. Sem rotacionar, as ÚLTIMAS da
+  // lista (sempre as mesmas) ficam permanentemente atrasadas: foi
+  // exatamente o que aconteceu com Spoletto Fortaleza e Vila Container,
+  // >50min sem sync enquanto o resto girava a cada ~15min. Rotacionar
+  // garante que, ao longo de poucos ciclos, toda empresa cai no início da
+  // fila e tem prioridade pra rodar dentro do orçamento de tempo.
+  const rotationPeriodMs = 15 * 60 * 1000
+  const offset = credentials.length > 0 ? Math.floor(Date.now() / rotationPeriodMs) % credentials.length : 0
+  const ordered = [...credentials.slice(offset), ...credentials.slice(0, offset)]
+
+  const startedAt = Date.now()
   const reports: SyncReport[] = []
-  for (const { companyId, apiToken } of credentials) {
+  for (const { companyId, apiToken } of ordered) {
+    if (Date.now() - startedAt > INCREMENTAL_TIME_BUDGET_MS) {
+      logger.warn(
+        `syncAllCompaniesNiboIncremental: orçamento de tempo esgotado, ${ordered.length - reports.length} empresa(s) ficaram pra próxima chamada`,
+      )
+      break
+    }
     reports.push(await syncCompanyNiboIncremental(companyId, apiToken))
     await sleep(INTER_COMPANY_DELAY_MS)
   }
